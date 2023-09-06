@@ -1,0 +1,176 @@
+---
+title: "HDD"
+output: html_document
+date: "2023-09-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr)
+
+```
+
+## R Markdown
+
+```{r}
+seed = 1234
+trials = 50
+alpha = 2
+delta = 0.5
+beta = 0.2
+tau = 0.3
+
+parameters = data.frame(alpha,delta,beta,tau, trials)
+
+data = rwiener(n = trials,
+        alpha = alpha,
+        delta = delta,
+        beta = beta,
+        tau = tau)
+
+data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                 Nl = nrow(data %>% filter(resp == "lower")),
+                 RTu = data %>% filter(resp == "upper") %>% .$q,
+                 RTl = data %>% filter(resp == "lower") %>% .$q,
+                 minRT = 0.7,
+                 RTbound = 0.1)
+
+
+mod = cmdstanr::cmdstan_model(here::here("HDDM.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    seed = seed,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+
+
+posteriors = as_draws_df(fit) %>% dplyr::select(any_of(names(parameters))) %>% mutate(prior = F)
+priors = as_draws_df(fit) %>% dplyr::select(starts_with("prior_")) %>% rename_with(~gsub("^prior_", "", .), everything()) %>% mutate(prior = T)
+
+rbind(posteriors,priors) %>% 
+  pivot_longer(cols = -prior) %>% 
+  ggplot(aes(x = value, fill = prior))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  facet_wrap(~name, scales = "free")+
+  geom_vline(data = parameters %>% select(-trials) %>% pivot_longer(everything()), aes(xintercept = value))
+
+
+```
+
+## fit model
+```{r}
+
+seed = 1234
+trials = 50
+alpha = 2
+delta = 0.5
+beta = 0.2
+tau = 0.3
+
+parameters = data.frame(alpha,delta,beta,tau, trials)
+
+fit_model = function(parameters){
+  id = parameters$id
+  
+  data = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                   Nl = nrow(data %>% filter(resp == "lower")),
+                   RTu = data %>% filter(resp == "upper") %>% .$q,
+                   RTl = data %>% filter(resp == "lower") %>% .$q,
+                   minRT = 0.5,
+                   RTbound = 0)
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("HDDM.stan"))
+  
+  
+  fit <- mod$sample(
+      data = data_stan,
+      seed = seed,
+      chains = 4,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  
+  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  diag = data.frame(fit$diagnostic_summary(), id)
+  
+  data = posteriors %>% mutate(num_div = diag$num_divergent,
+                               tree_depth = diag$num_max_treedepth,
+                               real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               trials = parameters$trials,
+                               id = id) %>% select(-contains("."))
+  return(list(data, diag))
+}
+```
+
+```{r}
+trials = seq(10,100,by = 10)
+alpha = seq(0,5,by = 1)
+delta = seq(-4,4,by = 1)
+beta = seq(0.1,0.9,by = 0.1)
+tau = seq(0.1,0.4,by = 0.1)
+
+parameters = expand.grid(alpha = alpha,delta = delta,beta = beta,tau = tau, trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+```{r}
+#cores = availableCores()-1
+
+plan(multisession, workers = cores)
+
+possfit_model = possibly(.f = fit_model, otherwise = "Error")
+
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
+```
+
+lets look at the divergences
+```{r}
+results2[[2]]
+
+divergence = map_dfr(results2, 2)
+
+divergence %>% median_qi(num_divergent)
+```
+there are none which is good now at the parameter values
+
+```{r, fig.height=10, fig.width=10}
+params = map_dfr(results2, 1)
+
+params %>% filter(variable == "alpha") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_alpha)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_alpha))+
+  facet_wrap(~trials)
+
+```
+
+
+
