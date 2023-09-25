@@ -225,85 +225,62 @@ functions {
     return out;
   }
 }
-
-
-// based on codes/comments by Guido Biele, Joseph Burling, Andrew Ellis, and potentially others @ Stan mailing lists
 data {
-  int<lower=0> Nu; // of upper boundary responses
-  int<lower=0> Nl; // of lower boundary responses
-  real RTu[Nu];    // upper boundary response times
-  real RTl[Nl];    // lower boundary response times
-  real minRT;      // minimum RT of the observed data
-  int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
+  int N;
+  real<lower=0> alpha_in;
+  real<lower=0> tau_in;
+  real<lower=0, upper=1> beta_in;
+  real delta_in;
+} 
+transformed data {
+  int N_lower = 0;
+  int N_upper = 0;
+  array[N] real rt;
+  array[N] real idx;
 
+  int counter = 0;
+  for (n in 1 : N) {
+    vector[2] tmp = wiener_rng(alpha_in, tau_in, beta_in, delta_in);
+    rt[n] = tmp[1];
+    idx[n] = tmp[2];
+    
+    if (tmp[2] == 0) {
+      N_lower += 1;
+    } else {
+      N_upper += 1;
+    } 
+  }
+  array[N_lower] int id_lower;
+  array[N_upper] int id_upper;
+  array[2] int cnt;
+  cnt[1] = 0;
+  cnt[2] = 0;
+  for (n in 1 : N) {
+    if (idx[n] == 0) {
+      cnt[1] += 1;
+      id_lower[cnt[1]] = n;
+    } else {
+      cnt[2] += 1;
+      id_upper[cnt[2]] = n;
+    }
+  }
+  
 }
-
 parameters {
-  // parameters of the DDM (parameter names in Ratcliffs DDM), from https://github.com/gbiele/stan_wiener_test/blob/master/stan_wiener_test.R
-  // also see: https://groups.google.com/forum///!searchin/stan-users/wiener%7Csort:relevance/stan-users/-6wJfA-t2cQ/Q8HS-DXgBgAJ
-  // alpha (a): Boundary separation or Speed-accuracy trade-off (high alpha means high accuracy). alpha > 0
-  // beta (b): Initial bias Bias for either response (beta > 0.5 means bias towards "upper" response 'A'). 0 < beta < 1
-  // delta (v): Drift rate Quality of the stimulus (delta close to 0 means ambiguous stimulus or weak ability). 0 < delta
-  // tau (ter): Nondecision time + Motor response time + encoding time (high means slow encoding, execution). 0 < ter (in seconds)
-  ///* upper boundary of tau must be smaller than minimum RT
-  //to avoid zero likelihood for fast responses.
-  //tau can for physiological reasone not be faster than 0.1 s.*/
-
-  real<lower=0, upper=5> alpha;  // boundary separation
-  real<lower=0, upper=1> beta;   // initial bias
-  real delta;  // drift rate
-  real tau_raw;  // nondecision time
+  real tau_raw; // logit of non-decision time
+  real delta; // drift-rate
+  real<lower=0> alpha; // boundary separation
+  real<lower=0, upper=1> beta; // starting point
 }
-
-transformed parameters{
-  
-   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
+transformed parameters {
+  real tau = inv_logit(tau_raw) * min(rt); // non-decision time at RT scale
 }
-
 model {
+  delta ~ normal(0, 3);
+  alpha ~ normal(1, 2);
+  beta ~ normal(0, 2);
   
-  alpha ~ uniform(0, 5);
-  beta  ~ uniform(0, 1);
-  delta ~ normal(0, 2);
-  tau_raw ~ normal(0,1);
-
-  
-  if(run_estimation==1){
-    RTu ~ wiener(alpha, tau, beta, delta);
-    RTl ~ wiener(alpha, tau, 1-beta, -delta);
-  }
+  tau_raw ~ normal(-.2, .48);
+  target += wiener_lpdf(rt[id_upper] | alpha, tau, beta, delta);
+  target += wiener_lpdf(rt[id_lower] | alpha, tau, 1 - beta, -delta);
 }
-
-generated quantities {
-  
-  real prior_alpha; 
-  real prior_beta;
-  real prior_delta;
-  real prior_tau;
-  //real log_lik;
-  
-  
-  array[Nu + Nl] vector[2] out;
-  
-  for (n in 1 : (Nu + Nl)) {
-    out[n] = wiener_rng(alpha, tau, beta, delta);
-  }
-
-  
-  // For log likelihood calculation
-
-  // For posterior predictive check (Not implementeed yet)
-  //vector[Nu] y_pred_upper;
-  //vector[Nl] y_pred_lower;
-
-  prior_alpha = uniform_rng(0, 5);
-  prior_beta  = uniform_rng(0, 1);
-  prior_delta = normal_rng(0, 2);
-  prior_tau = inv_logit(normal_rng(0,1)) * minRT;
-  
-
-  //log_lik = wiener_lpdf(RTu | alpha, tau, beta, delta)+wiener_lpdf(RTl | alpha, tau, 1-beta, -delta);
-
-
-}
-

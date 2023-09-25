@@ -231,10 +231,15 @@ functions {
 data {
   int<lower=0> Nu; // of upper boundary responses
   int<lower=0> Nl; // of lower boundary responses
+  int<lower=0> trials;
+  int<lower=0> indexupper[Nu];
+  int<lower=0> indexlower[Nl];  
   real RTu[Nu];    // upper boundary response times
   real RTl[Nl];    // lower boundary response times
   real minRT;      // minimum RT of the observed data
   int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
+  real u[trials];
+  int resp[trials+1];
 
 }
 
@@ -253,15 +258,31 @@ parameters {
   real<lower=0, upper=1> beta;   // initial bias
   real delta;  // drift rate
   real tau_raw;  // nondecision time
+  real <lower =0, upper = 1> lr;
+  
 }
 
 transformed parameters{
+  real expect[trials+1];
+  real uncert[trials+1];
+  real deltat[trials+1];
   
-   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
+  
+  real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
+  
+  expect[1] = 0.5;
+  for(i in 1:(trials)){
+    expect[i+1] = expect[i]+lr*(u[i]-expect[i]);
+    uncert[i] = expect[i] * (1 - expect[i]);
+    
+    deltat[i] = delta * uncert[i];
+  }
+  
+  
 }
 
 model {
-  
+  lr ~ beta_proportion(0.5,10);
   alpha ~ uniform(0, 5);
   beta  ~ uniform(0, 1);
   delta ~ normal(0, 2);
@@ -269,8 +290,21 @@ model {
 
   
   if(run_estimation==1){
-    RTu ~ wiener(alpha, tau, beta, delta);
-    RTl ~ wiener(alpha, tau, 1-beta, -delta);
+    
+    for(i in 1:Nu){
+      
+      RTu ~ wiener(alpha, tau, beta, deltat[indexupper[i]]);
+    }
+    
+    for(i in 1:Nl){
+      
+      RTl ~ wiener(alpha, tau, 1-beta, -deltat[indexlower[i]]);
+    }
+    
+
+    for(i in 1:(trials+1)){
+      resp[i] ~ bernoulli(expect[i]);
+    }
   }
 }
 
