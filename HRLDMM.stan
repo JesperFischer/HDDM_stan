@@ -229,13 +229,19 @@ functions {
 
 // based on codes/comments by Guido Biele, Joseph Burling, Andrew Ellis, and potentially others @ Stan mailing lists
 data {
-  int<lower=0> Nu; // of upper boundary responses
-  int<lower=0> Nl; // of lower boundary responses
-  array[Nu] real RTu;    // upper boundary response times
-  array[Nl] real RTl;    // lower boundary response times
-  real minRT;      // minimum RT of the observed data
+  int<lower=0> subjects;
+  array[subjects] int <lower=0> trials;
+  array[subjects] int <lower=0> Nu; // of upper boundary responses
+  array[subjects] int <lower=0> Nl; // of lower boundary responses
+  
+  array[Nu,subjects] int<lower=0> indexupper;
+  array[Nl,subjects] int<lower=0> indexlower;  
+  array[Nu,subjects] real RTu;    // upper boundary response times
+  array[Nl,subjects] real RTl;    // lower boundary response times
+  array[subjects] real minRT;      // minimum RT of the observed data
   int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
-
+  array[trials,subjects] real u;
+  array[trials+1,subjects] int resp;
 
 }
 
@@ -250,61 +256,91 @@ parameters {
   //to avoid zero likelihood for fast responses.
   //tau can for physiological reasone not be faster than 0.1 s.*/
 
-  real<lower=0, upper=5> alpha;  // boundary separation
-  real<lower=0, upper=1> beta;   // initial bias
-  real delta;  // drift rate
-  real tau_raw;  // nondecision time
+  //1 is alpha, 2 is beta, 3 is delta, 4 is tau_raw and 5 is lr
+  vector [5] gm;
+
+  vector<lower = 0>[5]  tau_u;
+  
+  matrix[5, subjects] z_expo;
+  
+  cholesky_factor_corr[5] L_u;
 }
 
 transformed parameters{
+  array[trials+1,subjects] real expect;
+  array[trials+1,subjects] real uncert;
+  array[trials+1,subjects] real deltat;
   
-   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
+  array[subjects] real <lower = 0> alpha;
+  array[subjects] real <lower = 0, upper = 1> beta;
+  array[subjects] real <lower = 0> delta;
+  array[subjects] real <lower = 0> tau;
+  array[subjects] real <lower = 0, upper = 1> lr;
+  
+  
+
+  for(sub in 1:subjects){
+    
+    alpha[sub] = inv_logit(gm[1]+((diag_pre_multiply(tau_u, L_u) * z_expo)'[s,1]))*5;
+    
+    beta[sub] = inv_logit(gm[2]+((diag_pre_multiply(tau_u, L_u) * z_expo)'[s,2])); 
+    
+    delta[sub] = gm[3]+((diag_pre_multiply(tau_u, L_u) * z_expo)'[s,3]); 
+    
+    tau[sub] = inv_logit(gm[4]+((diag_pre_multiply(tau_u, L_u) * z_expo)'[s,4])) * minRT[sub]; // non-decision time at RT scale
+    
+    lr[sub] = inv_logit(gm[5]+((diag_pre_multiply(tau_u, L_u) * z_expo)'[s,5])); 
+    
+    
+    expect[1,sub] = 0.5;
+    for(t in 1:trials[sub]){
+      expect[t+1,sub] = expect[t,sub]+lr[sub]*(u[t,sub]-expect[t,sub]);
+      uncert[t,sub] = expect[t,sub] * (1 - expect[t,sub]);
+      
+      deltat[t,sub] = delta[sub] * uncert[t,sub];
+    }
+    
+  }
 }
 
 model {
   
-  alpha ~ uniform(0.1, 5);
-  beta  ~ uniform(0, 1);
-  delta ~ normal(0, 2);
-  tau_raw ~ normal(0,1);
-
+  target += normal_lpdf(gm[1] |0,2);
+  
+  target += beta_proportion_lpdf(gm[2] |0.5,5);
+    
+  target += normal_lpdf(gm[3] |0,2);
+  
+  target += normal_lpdf(gm[4] |0,2);
+  
+  target += beta_proportion_lpdf(gm[5] |0.5,5);
+  
+  
+  target += normal_lpdf(tau_u | 0, 2)-normal_lccdf(0 | 0, 2);
+  
+  target += lkj_corr_cholesky_lpdf(L_u | 2);
+  
+  target += std_normal_lpdf(to_vector(z_expo));
+  
   
   if(run_estimation==1){
-    RTu ~ wiener(alpha, tau, beta, delta);
-    RTl ~ wiener(alpha, tau, 1-beta, -delta);
+    
+    for(sub in 1:subjects){
+      for(i in 1:Nu[sub]){
+        
+        RTu[i,sub] ~ wiener(alpha[sub], tau[sub], beta[sub], deltat[indexupper[i],sub]);
+      }
+      
+      for(i in 1:Nl[sub]){
+        
+        RTl[i,sub] ~ wiener(alpha[sub], tau[sub], 1-beta[sub], -deltat[indexlower[i],sub]);
+      }
+      
+  
+      for(i in 1:trials){
+        resp[i,sub] ~ bernoulli(expect[i,sub]);
+      }
+    }
   }
-}
-
-generated quantities {
-  
-  real prior_alpha; 
-  real prior_beta;
-  real prior_delta;
-  real prior_tau;
-  //real log_lik;
-  
-  
-  array[Nu + Nl] vector[2] out;
-  
-  for (n in 1 : (Nu + Nl)) {
-    out[n] = wiener_rng(alpha, tau, beta, delta);
-  }
-
-  
-  // For log likelihood calculation
-
-  // For posterior predictive check (Not implementeed yet)
-  //vector[Nu] y_pred_upper;
-  //vector[Nl] y_pred_lower;
-
-  prior_alpha = uniform_rng(0, 5);
-  prior_beta  = uniform_rng(0, 1);
-  prior_delta = normal_rng(0, 2);
-  prior_tau = inv_logit(normal_rng(0,1)) * minRT;
-  
-
-  //log_lik = wiener_lpdf(RTu | alpha, tau, beta, delta)+wiener_lpdf(RTl | alpha, tau, 1-beta, -delta);
-
-
 }
 

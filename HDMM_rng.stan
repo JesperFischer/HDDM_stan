@@ -284,3 +284,5 @@ model {
   target += wiener_lpdf(rt[id_upper] | alpha, tau, beta, delta);
   target += wiener_lpdf(rt[id_lower] | alpha, tau, 1 - beta, -delta);
 }
+
+

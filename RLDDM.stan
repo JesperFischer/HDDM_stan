@@ -232,14 +232,14 @@ data {
   int<lower=0> Nu; // of upper boundary responses
   int<lower=0> Nl; // of lower boundary responses
   int<lower=0> trials;
-  int<lower=0> indexupper[Nu];
-  int<lower=0> indexlower[Nl];  
-  real RTu[Nu];    // upper boundary response times
-  real RTl[Nl];    // lower boundary response times
+  array[Nu] int<lower=0> indexupper;
+  array[Nl] int<lower=0> indexlower;  
+  array[Nu] real RTu;    // upper boundary response times
+  array[Nl] real RTl;    // lower boundary response times
   real minRT;      // minimum RT of the observed data
   int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
-  real u[trials];
-  int resp[trials+1];
+  array[trials] real u;
+  array[trials+1] int resp;
 
 }
 
@@ -254,7 +254,7 @@ parameters {
   //to avoid zero likelihood for fast responses.
   //tau can for physiological reasone not be faster than 0.1 s.*/
 
-  real<lower=0, upper=5> alpha;  // boundary separation
+  real<lower=1, upper=5> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
   real delta;  // drift rate
   real tau_raw;  // nondecision time
@@ -263,19 +263,21 @@ parameters {
 }
 
 transformed parameters{
-  real expect[trials+1];
-  real uncert[trials+1];
-  real deltat[trials+1];
+  array[trials+1] real expect;
+  array[trials+1] real uncert;
+  array[trials+1] real deltat;
   
   
   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
   
   expect[1] = 0.5;
-  for(i in 1:(trials)){
-    expect[i+1] = expect[i]+lr*(u[i]-expect[i]);
-    uncert[i] = expect[i] * (1 - expect[i]);
-    
+  for(i in 1:trials){
+
+    uncert[i] = expect[i] - (1 - expect[i]);
+
     deltat[i] = delta * uncert[i];
+    expect[i+1] = expect[i]+lr*(u[i]-expect[i]);
+
   }
   
   
@@ -283,7 +285,7 @@ transformed parameters{
 
 model {
   lr ~ beta_proportion(0.5,10);
-  alpha ~ uniform(0, 5);
+  alpha ~ uniform(0.1, 5);
   beta  ~ uniform(0, 1);
   delta ~ normal(0, 2);
   tau_raw ~ normal(0,1);
@@ -302,42 +304,20 @@ model {
     }
     
 
-    for(i in 1:(trials+1)){
-      resp[i] ~ bernoulli(expect[i]);
+    for(i in 1:trials){
+     resp[i] ~ bernoulli(expect[i]);
     }
   }
 }
 
+
 generated quantities {
   
-  real prior_alpha; 
-  real prior_beta;
-  real prior_delta;
-  real prior_tau;
-  //real log_lik;
+  array[trials] vector[2] out;
   
-  
-  array[Nu + Nl] vector[2] out;
-  
-  for (n in 1 : (Nu + Nl)) {
-    out[n] = wiener_rng(alpha, tau, beta, delta);
+  for (n in 1 : trials) {
+    out[n] = wiener_rng(alpha, tau, beta, deltat[n]);
   }
-
-  
-  // For log likelihood calculation
-
-  // For posterior predictive check (Not implementeed yet)
-  //vector[Nu] y_pred_upper;
-  //vector[Nl] y_pred_lower;
-
-  prior_alpha = uniform_rng(0, 5);
-  prior_beta  = uniform_rng(0, 1);
-  prior_delta = normal_rng(0, 2);
-  prior_tau = inv_logit(normal_rng(0,1)) * minRT;
-  
-
-  //log_lik = wiener_lpdf(RTu | alpha, tau, beta, delta)+wiener_lpdf(RTl | alpha, tau, 1-beta, -delta);
 
 
 }
-
