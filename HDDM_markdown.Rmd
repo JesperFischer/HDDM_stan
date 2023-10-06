@@ -393,8 +393,78 @@ plan(multisession, workers = cores)
 possfit_model = possibly(.f = param_recov, otherwise = "Error")
 
 results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
 ```
 
+
+
+
+```{r, fig.width = 10, fig.height=7}
+params = map_dfr(results, 1)
+
+params %>% filter(variable == "beta") %>% mutate(real_beta = as.factor(real_beta)) %>% 
+        ggplot(aes(x = mean, fill = real_beta))+
+        facet_grid(real_alpha~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_beta), alpha = 0.75)
+
+params %>% filter(variable == "tau") %>% mutate(real_tau = as.factor(real_tau)) %>% 
+        ggplot(aes(x = mean, fill = real_tau))+
+        facet_grid(real_alpha~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_tau), alpha = 0.75)
+
+
+params %>% filter(variable == "alpha") %>% mutate(real_alpha = as.factor(real_alpha)) %>% 
+        ggplot(aes(x = mean, fill = real_alpha))+
+        facet_wrap(variable~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_alpha), alpha = 0.75)
+
+
+params %>% filter(variable == "lr") %>% mutate(real_lr = as.factor(real_lr)) %>% 
+        ggplot(aes(x = mean, fill = real_lr))+
+        facet_grid(real_alpha~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_lr), alpha = 0.75)
+
+
+params %>% filter(variable == "delta") %>% mutate(real_delta = as.factor(real_delta)) %>% 
+        ggplot(aes(x = mean, fill = real_delta))+
+        facet_grid(real_alpha~trials, labeller = label_both, scales = "free")+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_delta), alpha = 0.75)
+
+
+
+params %>% filter(variable == "delta" & real_alpha == 1) %>% mutate(real_delta = as.factor(real_delta)) %>% 
+        ggplot(aes(x = mean, fill = real_delta))+
+        facet_grid(real_lr~trials, labeller = label_both, scales = "free")+        theme_classic()+
+        geom_density(aes(y = ..scaled.., x = median, fill = real_delta), alpha = 0.75)
+
+
+
+########## scatter plots
+params %>% filter(variable == "delta") %>% 
+        ggplot(aes(x = mean, y = real_delta, col = real_alpha))+
+        facet_grid(real_lr~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(-1, 10), xlim = c(-1,10))
+
+
+params %>% filter(variable == "lr") %>% 
+        ggplot(aes(x = mean, y = real_lr, col = real_alpha))+
+        facet_grid(real_delta~trials, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(0, 1), xlim = c(0,1))
+
+```
 
 
 ## fit model
