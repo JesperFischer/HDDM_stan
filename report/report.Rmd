@@ -18,33 +18,399 @@ date: "2023-07-21"
 </style>
 
 
-```{r setup, include=FALSE}
+```{r setup, include=FALSE,warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse, gganimate)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate)
 
 ```
 
+Lets start off making a function that simulates the weiner process:
 
 ```{r}
-timesteps = 500
-w0 = 0
-sd = 1
+make_weiner = function(data){
+  
+timesteps = data$max_time
+w0 = data$bias
+sd = data$sd
+
+bound = data$bound
+
+drift = data$drift
 
 w = array(NA,timesteps+1)
 w[1] = 0
 for(i in 1:timesteps){
-  w[i+1] = w[i]+rnorm(1,0,sd)
-}
+    if(w[i] > bound){
+      w[i:(i+5)] = bound
+      
+      break
+    }else if(w[i] < -bound){
+      w[i:(i+5)] = -bound
+      break
+    }
+    w[i+1] = w[i]+rnorm(1,0,sd)+drift
+  }
+q = data.frame(x = 1:timesteps,
+           y = w[1:timesteps],
+           bound = bound,
+           bias = bias,
+           sd = sd,
+           max_time = max_time,
+           drift = drift,
+           col = round(rnorm(1,100,1000),0))
 
-data.frame(x = 1:timesteps,
-           y = w[1:timesteps]) %>% 
-  ggplot(aes(x = x, y = y))+
+return(list(q))
+}
+```
+
+Next we then simulate 5 such process!
+
+```{r}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(0.1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(0,length.out = 1)
+
+replicate = 1:5
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = availableCores()-3)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+q = na.omit(data) %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(col)))+
   xlab("Time")+
   ylab("x")+
-  geom_line()+
+  coord_cartesian(ylim = c(min(na.omit(data)$y),max(na.omit(data)$y)))+
+  geom_line(linewidth=1)+
   theme_classic()+
-  transition_time(x)
+  geom_hline(yintercept = bound, linetype = 2)+
+  geom_hline(yintercept = -bound, linetype = 2)+
+  theme(legend.position="none")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  #transition_time(x)+
+  #shadow_wake(wake_length = 0.1, alpha = FALSE)+
+  #shadow_mark(alpha = 0.3, size = 0.5)+
+  transition_reveal(x)
 
+q
+```
+
+We can now play around with different drift rates and animate those!
+
+```{r differing driftrates}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(-1,1,length.out = 5)
+
+replicate = 1:5
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = availableCores()-3)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+q = na.omit(data) %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(col)))+
+  xlab("Time")+
+  ylab("x")+
+  facet_wrap(~drift, nrow = 3, ncol = 2, labeller = label_both)+
+  coord_cartesian(ylim = c(min(na.omit(data)$y),max(na.omit(data)$y)))+
+  geom_line(linewidth=1)+
+  theme_classic()+
+  geom_hline(yintercept = bound, linetype = 2)+
+  geom_hline(yintercept = -bound, linetype = 2)+
+  theme(legend.position="none")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  #transition_time(x)+
+  #shadow_wake(wake_length = 0.1, alpha = FALSE)+
+  #shadow_mark(alpha = 0.3, size = 0.5)+
+  transition_reveal(x)
+
+q
+```
+
+Lastly we can look at the RT distribution for both lower and upper bound hits for different drift rates:
+
+```{r}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(-1,1,length.out = 5)
+
+replicate = 1:1000
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = availableCores()-3)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+
+qq = na.omit(data) %>% group_by(col,drift) %>% summarize(x = max(x)) %>% 
+  mutate(upper = ifelse(col < 0, T,F)) %>% ungroup() %>% mutate(frame = 1:nrow(.)) %>% 
+  ggplot(aes(x = x)) + 
+  geom_histogram(aes(fill = upper,bins = 30), position = position_dodge())+
+  theme_classic()+
+  facet_wrap(~drift, labeller = label_both)
+qq
 
 ```
+
+```{r}
+
+df = data.frame()
+for(d in drift){
+  df = rbind(df,RWiener::rwiener(1000,alpha = bound,tau = 0.01, beta = bias, delta = d)%>% mutate(drift = d))
+}
+
+
+qq = na.omit(df) %>% 
+  mutate(upper = ifelse(resp == "upper", T,F)) %>% 
+  ggplot(aes(x = q)) + 
+  geom_histogram(aes(fill = upper,bins = 30), position = position_dodge())+
+  theme_classic()+
+  facet_wrap(~drift, labeller = label_both)
+
+
+qq
+```
+
+Lets try and fit this in Stan!
+
+```{r}
+trials = 500
+alpha = 2
+delta = 0
+beta = 0.5
+tau = 0.1
+
+
+parameters = data.frame(alpha,delta,beta,tau, trials)
+
+data = rwiener(n = trials,
+        alpha = alpha,
+        delta = delta,
+        beta = beta,
+        tau = tau)
+
+data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                 Nl = nrow(data %>% filter(resp == "lower")),
+                 RTu = data %>% filter(resp == "upper") %>% .$q,
+                 RTl = data %>% filter(resp == "lower") %>% .$q,
+                 minRT = min(data$q),
+                 run_estimation = 1)
+
+
+mod = cmdstanr::cmdstan_model(here::here("HDDM.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+
+
+rt_pattern <- "out\\[\\d+,1\\]"
+choice_pattern <- "out\\[\\d+,2\\]"
+
+
+Rts = fit$summary() %>%
+  filter(grepl(rt_pattern, variable))
+
+
+Rts = as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern))
+
+Rts %>% slice(sample(1:4000,10)) %>% pivot_longer(everything()) %>% ggplot(aes(x = value))+geom_histogram()
+
+choice = fit$summary() %>%
+  filter(grepl(choice_pattern, variable))
+
+choice = as_draws_df(fit$draws()) %>%
+  select(matches(choice_pattern))
+
+
+posteriors = as_draws_df(fit) %>% dplyr::select(any_of(names(parameters))) %>% mutate(prior = F)
+priors = as_draws_df(fit) %>% dplyr::select(starts_with("prior_")) %>% rename_with(~gsub("^prior_", "", .), everything()) %>% mutate(prior = T)
+
+rbind(posteriors,priors) %>% 
+  pivot_longer(cols = -prior) %>% 
+  ggplot(aes(x = value, fill = prior))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  facet_wrap(~name, scales = "free")+
+  geom_vline(data = parameters %>% select(-trials) %>% pivot_longer(everything()), aes(xintercept = value))
+
+
+draws = 10
+#pp_check
+as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern)) %>% slice(sample(1:4000,draws)) %>% 
+  pivot_longer(everything()) %>% mutate(estimated = TRUE, slice = rep(1:trials,draws)) %>% 
+  ggplot()+
+  geom_density(aes(x = value, group = slice), color = "lightblue")+
+  geom_density(data = data %>% mutate(estimated = FALSE), aes(x = q), color = "red")+
+  theme_classic()
+```
+
+
+# Lets do some parameter recovery on this model!
+
+## fit model
+```{r}
+fit_model = function(parameters){
+  id = parameters$id
+  
+  data = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                   Nl = nrow(data %>% filter(resp == "lower")),
+                   RTu = data %>% filter(resp == "upper") %>% .$q,
+                   RTl = data %>% filter(resp == "lower") %>% .$q,
+                   minRT = min(data$q),
+                   RTbound = 0)
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("HDDM.stan"))
+  
+  
+  fit <- mod$sample(
+      data = data_stan,
+      seed = seed,
+      chains = 4,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  
+  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  diag = data.frame(fit$diagnostic_summary(), id)
+  
+  data = posteriors %>% mutate(num_div = diag$num_divergent,
+                               tree_depth = diag$num_max_treedepth,
+                               real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               trials = parameters$trials,
+                               id = id) %>% select(-contains("."))
+  return(list(data, diag))
+}
+```
+
+```{r}
+trials = seq(10,100,by = 10)
+alpha = seq(0,5,by = 1)
+delta = seq(-4,4,by = 1)
+beta = seq(0.1,0.9,by = 0.1)
+tau = seq(0.1,0.4,by = 0.1)
+
+parameters = expand.grid(alpha = alpha,delta = delta,beta = beta,tau = tau, trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+```{r}
+#cores = availableCores()-1
+
+plan(multisession, workers = cores)
+
+possfit_model = possibly(.f = fit_model, otherwise = "Error")
+
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
+```
+
+
+lets look at the divergences
+```{r}
+results2[[2]]
+
+divergence = map_dfr(results2, 2)
+
+divergence %>% median_qi(num_divergent)
+```
+there are none which is good now at the parameter values
+
+```{r, fig.height=10, fig.width=10}
+params = map_dfr(results2, 1)
+
+params %>% filter(variable == "alpha") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_alpha)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_alpha))+
+  facet_wrap(~trials)
+
+```
+
 
