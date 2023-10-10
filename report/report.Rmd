@@ -581,7 +581,8 @@ resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
 
 resp = resp %>% mutate(correct = ifelse(real_resp == u, 1, 0))
 
-resp$percept = percept
+resp$percept = ifelse(percept < 0.001, 0.001, ifelse(percept > 0.999, 0.999, percept))
+
 resp$stim = stim
 
 return(resp)
@@ -590,8 +591,8 @@ return(resp)
 
 
 
-resp = agent_expect(parameters = data.frame(n_reversals = 10,
-                              trials_per_reversal = 10,
+resp = agent_expect(parameters = data.frame(n_reversals = 2,
+                              trials_per_reversal = 20,
                               alpha = 1,
                               lr = 0.3,
                               delta = 2,
@@ -603,9 +604,9 @@ resp = agent_expect(parameters = data.frame(n_reversals = 10,
                               prec_per = 10,
                               id = 2))
 
-df %>% ggplot(aes(x = trial, y = percept, col = as.factor(stim)))+geom_point()
+resp %>% ggplot(aes(x = trial, y = percept, col = as.factor(stim)))+geom_point()
 
-df %>% ggplot(aes(x = expectation, y = percept, col = as.factor(stim)))+geom_point()
+resp %>% ggplot(aes(x = expectation, y = percept, col = as.factor(stim)))+geom_point()
 
 
 data_stan = list(Nu = nrow(resp %>% filter(resp == "upper")),
@@ -696,9 +697,6 @@ parameter_recovery_expect = function(parameters){
 
 
 ```{r}
-qq = parameter_recovery_expect(data_list[[50]])
-
-
 n_reversals = seq(5,length.out = 1)
 #n_reversals = seq(5,length.out = 1)
 
@@ -720,7 +718,7 @@ tau = seq(0.1, length.out = 1)
 
 e0 = seq(0.5, length.out = 1)
 
-prec_per = seq(10, length.out = 1)
+prec_per = seq(1,10, length.out = 3)
 
 nu = seq(0.1,0.4, length.out = 4)
 
@@ -741,9 +739,13 @@ parameters = expand.grid(n_reversals = n_reversals,
   mutate(id = 1:nrow(.))
 
 data_list <- split(parameters, parameters$id)
+```
 
 
-#cores = availableCores()-1
+```{r}
+qq = parameter_recovery_expect(data_list[[50]])
+
+cores = availableCores()-1
 
 plan(multisession, workers = cores)
 
