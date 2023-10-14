@@ -870,6 +870,433 @@ map_dfr(results,1) %>% group_by(id,alpha,zeta,seed) %>%
 
 ```
 
+How about other learning models: Kalman filtering, hierarchical gaussian filtering or volatile kalman filtering?
+```{r VKF}
+agent2 = function(parameters){
+seed = parameters$seed
+set.seed(seed)  
+  
+trials_per_reversal = parameters$trials_per_reversal
+n_reversals = parameters$n_reversals
+
+u = c(rbinom(50,1,0.8),
+      rbinom(trials_per_reversal,1,0.2),
+      rbinom(trials_per_reversal,1,0.8),
+      rbinom(trials_per_reversal,1,0.2),
+      rbinom(trials_per_reversal,1,0.8),
+      rbinom(trials_per_reversal,1,0.2),
+      rbinom(trials_per_reversal,1,0.8),
+      rbinom(trials_per_reversal,1,0.2),
+      rbinom(trials_per_reversal,1,0.8),
+      rbinom(50,1,0.2))
+
+N = length(u)
+
+omega = parameters$omega
+v0 = parameters$v0
+w0 = parameters$w0
+m0 = parameters$m0
+
+lambda = parameters$lambda
+
+zeta = parameters$zeta
+
+
+k = array(NA, N+1)
+a = array(NA, N+1)
+m = array(NA, N+1)
+v = array(NA, N+1)
+w = array(NA, N+1)
+w2 = array(NA, N+1)
+real_resp = array(NA, N+1)
+
+w[1] = w0
+v[1] = v0
+m[1] = m0
+
+s = function(x){
+  return(1/(1+exp(-x)))
+}
+
+agg = tryCatch({
+    for(i in 1:N){
+    
+    k[i+1] = (w[i]+v[i])/(w[i]+v[i]+omega)
+    a[i+1] = sqrt((w[i]+v[i]))
+    m[i+1] = m[i]+a[i+1]*(u[i]-s(m[i]))
+    
+    w2[i] = (1-k[i+1])*(w[i])
+    
+    w[i+1] = (1-k[i+1])*(w[i]+v[i])
+    
+    v[i+1] = v[i]+lambda*((m[i+1]-m[i])^2+w[i]+w[i+1]-2*w2[i]-v[i])
+    
+    real_resp[i] = rbinom(1,1,(s(m[i])^zeta)/((s(m[i])^zeta)+(1-s(m[i]))^zeta))
+    
+    }
+    resp = data.frame(k = k,a = a, m = m, w2 = w2, w = w, v = v, resp = real_resp)
+    resp$u = c(u,NA)
+    resp$trial = 1:(N+1)
+    resp = resp %>% mutate(correct = ifelse(real_resp == u, 1, 0))
+# 
+
+    resp = resp[1:N,]
+    agg = data.frame(pcorrect =  sum(resp$correct)/N,
+                     correct = sum(resp$correct),
+                     omega = omega,
+                     lambda = lambda,
+                     zeta = zeta,
+                     trials = N,
+                     seed = seed,
+                     n_r = n_reversals,
+                     t_p_r = trials_per_reversal)
+      
+      
+    }, warning=function(w) {
+        ## do something about the warning, maybe return 'NA'
+        return(data.frame(pcorrect = NA,
+                     correct = NA,
+                     omega = omega,
+                     lambda = lambda,
+                     zeta = zeta,
+                     seed = seed,
+                     trials = N,
+                     n_r = n_reversals,
+                     t_p_r = trials_per_reversal))
+})
+
+return(list(agg))
+}
+
+```
+
+
+```{r}
+agent2(parameters = data.frame(n_reversals = 5,
+                              trials_per_reversal = 20,
+                              omega = 1,
+                              v0 = 0.1,
+                              seed = 123,
+                              w0 = 0.1,
+                              m0 = 0.5,
+                              lambda = 1,
+                              zeta = 5,
+                              id = 2))
+
+
+n_reversals = seq(5,20,length.out = 4)
+n_reversals = seq(5,length.out = 1)
+
+trials_per_reversal = seq(20,40, length.out = 3)
+#trials_per_reversal = seq(20, length.out = 1)
+
+
+omega = seq(0.1,10, length.out = 25)
+lambda = seq(0.01,5, length.out = 25)
+
+
+v0 = seq(0.1, length.out = 1)
+
+m0 = seq(0.5, length.out = 1)
+
+w0 = seq(0.1, length.out = 1)
+
+zeta = seq(5,5, by = 1)
+
+seed = sample(round(rnorm(1000,1000,100),0),5,replace = F)
+
+replicate = 1
+
+parameters = expand.grid(n_reversals = n_reversals,
+                         omega= omega,
+                         lambda = lambda,
+                         v0 = v0,
+                         w0 = w0,
+                         m0 = m0,
+                         seed = seed,
+                         zeta = zeta,
+                         replicate = replicate,
+                         trials_per_reversal = trials_per_reversal) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+
+cores = availableCores()-1
+
+plan(multisession, workers = cores)
+
+results <- future_map(data_list, ~agent2(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+
+params2 = na.omit(params)
+
+
+## seed analysis
+
+optimals = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T) | params2$pcorrect > max(params2$pcorrect, na.rm = T)-0.05,] 
+optimal = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T),]
+
+params %>% group_by(t_p_r, n_r,omega,zeta,lambda, seed) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = lambda))+
+  geom_raster(aes(fill = mean))+
+  facet_wrap(t_p_r~seed, labeller = label_both)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")
+  
+
+params %>% group_by(t_p_r, n_r,omega,zeta,lambda) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = lambda, col = mean))+
+  geom_jitter()+
+  facet_wrap(~zeta, labeller = label_both)+
+  scale_color_continuous(type = "viridis",)+
+  theme_classic()
+
+
+## trials analysis
+
+
+optimals = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T) | params2$pcorrect > max(params2$pcorrect, na.rm = T)-0.05,] 
+optimal = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T),]
+
+params %>% group_by(t_p_r, n_r,omega,zeta,lambda, seed) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% mutate(mean = ifelse(mean < max(optimal$pcorrect)-0.05, NA, mean)) %>% 
+  ggplot(aes(y = omega, x = lambda))+
+  geom_raster(aes(fill = mean))+
+  facet_wrap(t_p_r~n_r, labeller = label_both, ncol = length(n_reversals), nrow = length(trials_per_reversal))+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")
+```
+
+
+
+```{r HGF}
+agent3 = function(parameters){
+  
+  sigmoid = function(x) {
+    1 / (1 + exp(-x))}
+  
+
+  seed = parameters$seed
+  set.seed(seed)  
+    
+  trials_per_reversal = parameters$trials_per_reversal
+  n_reversals = parameters$n_reversals
+  
+  u = c(rbinom(50,1,0.8),
+        rbinom(trials_per_reversal,1,0.2),
+        rbinom(trials_per_reversal,1,0.8),
+        rbinom(trials_per_reversal,1,0.2),
+        rbinom(trials_per_reversal,1,0.8),
+        rbinom(trials_per_reversal,1,0.2),
+        rbinom(trials_per_reversal,1,0.8),
+        rbinom(trials_per_reversal,1,0.2),
+        rbinom(trials_per_reversal,1,0.8),
+        rbinom(50,1,0.2))
+  
+  N = length(u)
+
+  
+  theta = parameters$theta
+  kappa = parameters$kappa
+  omega = parameters$omega
+  beta = parameters$beta
+
+  
+  mu1hat = array(NA,N+1)
+  pe1 = array(NA,N+1)
+  pe2 = array(NA,N+1)
+  w2 = array(NA,N+1)
+  r2 = array(NA,N+1)
+  pi3hat = array(NA,N+1)
+  pi3 = array(NA,N+1)
+  sa1hat = array(NA,N+1)
+  mu2 = array(NA,N+1)
+  sa2 = array(NA,N+1)
+  sa2hat = array(NA,N+1)
+  mu3 = array(NA,N+1)
+  sa3 = array(NA,N+1)
+  y = array(NA,N+1)
+  belief = array(NA,N+1)
+  
+  
+  mu2[1] = 0
+  sa2[1] = 4
+  mu3[1] = 0
+  sa3[1] = 1
+  
+  
+agg = tryCatch({
+      for(t in 2:(N+1)){
+      
+        mu1hat[t] = sigmoid(mu2[t-1])
+        
+        sa2hat[t] = sa2[t-1]+exp(kappa*mu3[t-1]+omega)
+        
+        sa1hat[t] = mu1hat[t]*(1-mu1hat[t])
+        
+        pe1[t] = u[t-1]-mu1hat[t]
+        
+        
+        sa2[t] = 1/((1/sa2hat[t])+sa1hat[t])
+        
+        mu2[t] = (mu2[t-1]+pe1[t]*sa2[t])
+        
+      
+        pe2[t] = ((sa2[t]+(mu2[t]-mu2[t-1])^2)/(sa2[t-1]+exp(kappa*mu3[t-1]+omega)))-1
+        
+        r2[t] = (exp(kappa*mu3[t-1]+omega)-sa2[t-1])/(sa2[t-1]+exp(kappa*mu3[t-1]+omega))
+        
+        w2[t] = exp(kappa*mu3[t-1]+omega)/(sa2[t-1]+exp(kappa*mu3[t-1]+omega))
+        
+        pi3hat[t] = 1/(sa3[t-1]+theta)
+        
+        pi3[t] = pi3hat[t]+(kappa^2/2)*w2[t]*(w2[t]+r2[t]*pe2[t])
+        
+        sa3[t] = 1/pi3[t]
+        
+        mu3[t] = mu3[t-1]+sa3[t]*(kappa/2)*w2[t]*pe2[t]
+        
+        belief[t] = mu1hat[t]^beta/(mu1hat[t]^beta+(1-mu1hat[t])^beta)
+        
+        y[t] = rbinom(1,1,belief[t])
+  
+    }
+    
+    resp = data.frame(resp = y[2:(N+1)])
+    resp$u = u
+    resp$trial = 1:N
+    
+
+    resp = resp %>% mutate(correct = ifelse(resp == u, 1, 0))
+
+
+    agg = data.frame(pcorrect =  sum(resp$correct)/N,
+                     correct = sum(resp$correct),
+                     omega = omega,
+                     theta = theta,
+                     kappa = kappa,
+                     beta = beta,
+                     trials = N,
+                     seed = seed,
+                     t_p_r = trials_per_reversal)
+      
+      
+    }, warning=function(w) {
+        ## do something about the warning, maybe return 'NA'
+        return(data.frame(pcorrect = NA,
+                     correct = NA,
+                     omega = omega,
+                     theta = theta,
+                     beta = beta,
+                     kappa = kappa,
+                     seed = seed,
+                     trials = N,
+                     t_p_r = trials_per_reversal))
+})
+
+
+
+
+
+return(list(agg))
+}
+```
+
+
+```{r}
+agent3(parameters = data.frame(seed = 1113,
+                        trials_per_reversal = 20,
+                        theta = 5,
+                        omega = -1,
+                        kappa = 1,
+                        beta = 3))
+
+
+parameters = data.frame(seed = 1113,
+                        trials_per_reversal = 30,
+                        theta = 0.5,
+                        omega = -1,
+                        kappa = 1,
+                        beta = 3)
+
+
+trials_per_reversal = seq(10,30, by = 10)
+#trials_per_reversal = seq(20, length.out = 1)
+
+
+omega = seq(-10,10, length.out = 20)
+theta = seq(0,10, length.out = 20)
+kappa = seq(0,3, length.out = 5)
+beta = seq(5,5, by = 1)
+
+seed = sample(round(rnorm(1000,1000,100),0),5,replace = F)
+seed = 982
+
+replicate = 1
+
+
+
+parameters = expand.grid(trials_per_reversal = trials_per_reversal,
+                         omega= omega,
+                         theta = theta,
+                         kappa = kappa,
+                         seed = seed,
+                         beta = beta,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+agent3(data_list[[3]])
+
+cores = availableCores()-1
+
+plan(multisession, workers = cores)
+
+results <- future_map(data_list, ~agent3(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+
+params2 = na.omit(params)
+
+## seed analysis
+
+optimals = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T) | params2$pcorrect > max(params2$pcorrect, na.rm = T)-0.05,] 
+optimal = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T),]
+
+params %>% group_by(t_p_r,omega,theta,beta, seed) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = theta))+
+  geom_raster(aes(fill = mean))+
+  facet_grid(t_p_r~seed, labeller = label_both)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+
+## with kappa
+
+params %>% group_by(t_p_r,omega,theta,beta, kappa) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = theta))+
+  geom_raster(aes(fill = mean))+
+  facet_grid(t_p_r~kappa, labeller = label_both)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
 
 
 
@@ -1142,5 +1569,350 @@ unique(error_indices)
 
 results2 = results[results != "Error"]
 
+```
+
+
+
+
+
+
+
+
+```{r TPL HGF, fig.height=10, fig.width=10}
+agent_hgf_TPL = function(parameters){
+  
+  sigmoid = function(x) {
+    1 / (1 + exp(-x))}
+  
+  TPL = read.csv(here::here("..","TPL_con.csv"))
+    
+  u = TPL$u
+  
+  N = length(u)
+
+  
+  theta = parameters$theta
+  kappa = parameters$kappa
+  omega = parameters$omega
+  beta = parameters$beta
+
+  
+  mu1hat = array(NA,N+1)
+  pe1 = array(NA,N+1)
+  pe2 = array(NA,N+1)
+  w2 = array(NA,N+1)
+  r2 = array(NA,N+1)
+  pi3hat = array(NA,N+1)
+  pi3 = array(NA,N+1)
+  sa1hat = array(NA,N+1)
+  mu2 = array(NA,N+1)
+  sa2 = array(NA,N+1)
+  sa2hat = array(NA,N+1)
+  mu3 = array(NA,N+1)
+  sa3 = array(NA,N+1)
+  y = array(NA,N+1)
+  belief = array(NA,N+1)
+  
+  
+  mu2[1] = 0
+  sa2[1] = 4
+  mu3[1] = 0
+  sa3[1] = 1
+  
+  
+agg = tryCatch({
+      for(t in 2:(N+1)){
+      
+        mu1hat[t] = sigmoid(mu2[t-1])
+        
+        sa2hat[t] = sa2[t-1]+exp(kappa*mu3[t-1]+omega)
+        
+        sa1hat[t] = mu1hat[t]*(1-mu1hat[t])
+        
+        pe1[t] = u[t-1]-mu1hat[t]
+        
+        
+        sa2[t] = 1/((1/sa2hat[t])+sa1hat[t])
+        
+        mu2[t] = (mu2[t-1]+pe1[t]*sa2[t])
+        
+      
+        pe2[t] = ((sa2[t]+(mu2[t]-mu2[t-1])^2)/(sa2[t-1]+exp(kappa*mu3[t-1]+omega)))-1
+        
+        r2[t] = (exp(kappa*mu3[t-1]+omega)-sa2[t-1])/(sa2[t-1]+exp(kappa*mu3[t-1]+omega))
+        
+        w2[t] = exp(kappa*mu3[t-1]+omega)/(sa2[t-1]+exp(kappa*mu3[t-1]+omega))
+        
+        pi3hat[t] = 1/(sa3[t-1]+theta)
+        
+        pi3[t] = pi3hat[t]+(kappa^2/2)*w2[t]*(w2[t]+r2[t]*pe2[t])
+        
+        sa3[t] = 1/pi3[t]
+        
+        mu3[t] = mu3[t-1]+sa3[t]*(kappa/2)*w2[t]*pe2[t]
+        
+        belief[t] = mu1hat[t]^beta/(mu1hat[t]^beta+(1-mu1hat[t])^beta)
+        
+        y[t] = rbinom(1,1,belief[t])
+  
+    }
+    
+    resp = data.frame(resp = y[2:(N+1)])
+    resp$u = u
+    resp$trial = 1:N
+    
+
+    resp = resp %>% mutate(correct = ifelse(resp == u, 1, 0))
+
+
+    agg = data.frame(pcorrect =  sum(resp$correct)/N,
+                     correct = sum(resp$correct),
+                     omega = omega,
+                     theta = theta,
+                     kappa = kappa,
+                     beta = beta,
+                     trials = N,
+                     t_p_r = trials_per_reversal)
+      
+      
+    }, warning=function(w) {
+        ## do something about the warning, maybe return 'NA'
+        return(data.frame(pcorrect = NA,
+                     correct = NA,
+                     omega = omega,
+                     theta = theta,
+                     beta = beta,
+                     kappa = kappa,
+                     trials = N,
+                     t_p_r = trials_per_reversal))
+})
+
+
+
+
+
+return(list(agg))
+}
+
+omega = seq(-10,2, length.out = 25)
+theta = seq(0,5, length.out = 25)
+kappa = seq(1,1, length.out = 1)
+beta = seq(10,10, by = 1)
+
+replicate = 1
+
+
+
+parameters = expand.grid(omega= omega,
+                         theta = theta,
+                         kappa = kappa,
+                         beta = beta) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+agent_hgf_TPL(data_list[[3]])
+
+cores = availableCores()-2
+
+plan(multisession, workers = cores)
+
+results <- future_map(data_list, ~agent_hgf_TPL(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+
+params2 = na.omit(params)
+
+## FIXED KAPPA
+
+optimals = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T) | params2$pcorrect > max(params2$pcorrect, na.rm = T)-0.05,] 
+optimal = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T),]
+
+params %>% group_by(omega,theta) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = theta))+
+  geom_raster(aes(fill = mean))+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+
+
+kappa = seq(0,3, length.out = 10)
+
+
+parameters = expand.grid(omega= omega,
+                         theta = theta,
+                         kappa = kappa,
+                         beta = beta) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+
+cores = availableCores()-2
+
+plan(multisession, workers = cores)
+
+results <- future_map(data_list, ~agent_hgf_TPL(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+
+params2 = na.omit(params)
+
+
+
+## with kappa
+
+params %>% group_by(omega,theta, kappa) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = theta))+
+  geom_raster(aes(fill = mean))+
+  facet_wrap(~kappa, labeller = label_both, ncol = 5, nrow = 2)+
+  scale_fill_continuous(type = "viridis")+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+```
+
+
+```{r TPL VKF, fig.height=10, fig.width=10}
+agent_vkf_TPL = function(parameters){
+
+  TPL = read.csv(here::here("..","TPL_con.csv"))
+    
+  u = TPL$u
+  
+  N = length(u)
+  
+  
+  N = length(u)
+  
+  omega = parameters$omega
+  v0 = parameters$v0
+  w0 = parameters$w0
+  m0 = parameters$m0
+  
+  lambda = parameters$lambda
+  
+  zeta = parameters$zeta
+  
+  
+  k = array(NA, N+1)
+  a = array(NA, N+1)
+  m = array(NA, N+1)
+  v = array(NA, N+1)
+  w = array(NA, N+1)
+  w2 = array(NA, N+1)
+  real_resp = array(NA, N+1)
+  
+  w[1] = w0
+  v[1] = v0
+  m[1] = m0
+  
+  s = function(x){
+    return(1/(1+exp(-x)))
+  }
+  
+  agg = tryCatch({
+      for(i in 1:N){
+      
+      k[i+1] = (w[i]+v[i])/(w[i]+v[i]+omega)
+      a[i+1] = sqrt((w[i]+v[i]))
+      m[i+1] = m[i]+a[i+1]*(u[i]-s(m[i]))
+      
+      w2[i] = (1-k[i+1])*(w[i])
+      
+      w[i+1] = (1-k[i+1])*(w[i]+v[i])
+      
+      v[i+1] = v[i]+lambda*((m[i+1]-m[i])^2+w[i]+w[i+1]-2*w2[i]-v[i])
+      
+      real_resp[i] = rbinom(1,1,(s(m[i])^zeta)/((s(m[i])^zeta)+(1-s(m[i]))^zeta))
+      
+      }
+      resp = data.frame(k = k,a = a, m = m, w2 = w2, w = w, v = v, resp = real_resp)
+      resp$u = c(u,NA)
+      resp$trial = 1:(N+1)
+      resp = resp %>% mutate(correct = ifelse(real_resp == u, 1, 0))
+  # 
+  
+      resp = resp[1:N,]
+      agg = data.frame(pcorrect =  sum(resp$correct)/N,
+                       correct = sum(resp$correct),
+                       omega = omega,
+                       lambda = lambda,
+                       zeta = zeta,
+                       trials = N)
+        
+        
+      }, warning=function(w) {
+          ## do something about the warning, maybe return 'NA'
+          return(data.frame(pcorrect = NA,
+                       correct = NA,
+                       omega = omega,
+                       lambda = lambda,
+                       zeta = zeta,
+                       trials = N))
+  })
+  
+  return(list(agg))
+}
+```
+
+
+```{r TPL VKF,fig.height=10, fig.width=10}
+
+omega = seq(0.1,5, length.out = 50)
+lambda = seq(0.01,3, length.out = 50)
+
+
+v0 = seq(0.1, length.out = 1)
+
+m0 = seq(0.5, length.out = 1)
+
+w0 = seq(0.1, length.out = 1)
+
+zeta = seq(5,5, by = 1)
+
+
+parameters = expand.grid(omega= omega,
+                         lambda = lambda,
+                         v0 = v0,
+                         w0 = w0,
+                         m0 = m0,
+                         zeta = zeta) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+
+cores = availableCores()-3
+
+plan(multisession, workers = cores)
+
+results <- future_map(data_list, ~agent_vkf_TPL(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+
+params2 = na.omit(params)
+
+
+## seed analysis
+
+optimals = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T) | params2$pcorrect > max(params2$pcorrect, na.rm = T)-0.05,] 
+optimal = params2[params2$pcorrect == max(params2$pcorrect, na.rm = T),]
+
+params %>% group_by(omega,zeta,lambda) %>% summarize(mean = mean(pcorrect)) %>% 
+  mutate(mean = round(mean,2)) %>% 
+  ggplot(aes(y = omega, x = lambda))+
+  geom_raster(aes(fill = mean))+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  geom_point(data = optimals, size = 1)+
+  geom_point(data = optimal, size = 2, col = "red")
+  
 ```
 
