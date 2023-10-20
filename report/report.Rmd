@@ -393,19 +393,19 @@ data_list <- split(parameters, parameters$id)
 ```{r}
 #cores = availableCores()-1
 
-plan(multisession, workers = cores)
-
-possfit_model = possibly(.f = fit_model, otherwise = "Error")
-
-results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
-
-error_indices <- which(results == "Error")
-
-unique(error_indices)
-
-results2 = results[results != "Error"]
-
-results = NULL
+# plan(multisession, workers = cores)
+# 
+# possfit_model = possibly(.f = fit_model, otherwise = "Error")
+# 
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+# 
+# error_indices <- which(results == "Error")
+# 
+# unique(error_indices)
+# 
+# results2 = results[results != "Error"]
+# 
+# results = NULL
 ```
 
 

@@ -1,0 +1,820 @@
+---
+title: "ERLDMM"
+output:
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float: true
+  pdf_document: default
+  word_document: default
+urlcolor: blue
+date: "2023-07-21"
+---
+
+<style type="text/css">
+  body{
+  font-size: 14pt;
+}
+</style>
+
+
+```{r setup, include=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate)
+
+```
+
+Lets start off making a function that simulates the weiner process:
+
+```{r}
+make_weiner = function(data){
+  
+timesteps = data$max_time
+w0 = data$bias
+sd = data$sd
+
+bound = data$bound
+
+drift = data$drift
+
+w = array(NA,timesteps+1)
+w[1] = 0
+for(i in 1:timesteps){
+    if(w[i] > bound){
+      w[i:(i+5)] = bound
+      
+      break
+    }else if(w[i] < -bound){
+      w[i:(i+5)] = -bound
+      break
+    }
+    w[i+1] = w[i]+rnorm(1,0,sd)+drift
+  }
+q = data.frame(x = 1:timesteps,
+           y = w[1:timesteps],
+           bound = bound,
+           bias = bias,
+           sd = sd,
+           max_time = max_time,
+           drift = drift,
+           col = round(rnorm(1,100,1000),0))
+
+return(list(q))
+}
+```
+
+Next we then simulate 5 such process!
+
+```{r}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(0.1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(0,length.out = 1)
+
+replicate = 1:5
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = 4)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+q = na.omit(data) %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(col)))+
+  xlab("Time")+
+  ylab("x")+
+  coord_cartesian(ylim = c(min(na.omit(data)$y),max(na.omit(data)$y)))+
+  geom_line(linewidth=1)+
+  theme_classic()+
+  geom_hline(yintercept = bound, linetype = 2)+
+  geom_hline(yintercept = -bound, linetype = 2)+
+  theme(legend.position="none")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  #transition_time(x)+
+  #shadow_wake(wake_length = 0.1, alpha = FALSE)+
+  #shadow_mark(alpha = 0.3, size = 0.5)+
+  transition_reveal(x)
+
+q
+```
+
+We can now play around with different drift rates and animate those!
+
+```{r differing driftrates}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(-1,1,length.out = 5)
+
+replicate = 1:5
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = 4)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+q = na.omit(data) %>% 
+  ggplot(aes(x = x, y = y, color = as.factor(col)))+
+  xlab("Time")+
+  ylab("x")+
+  facet_wrap(~drift, nrow = 3, ncol = 2, labeller = label_both)+
+  coord_cartesian(ylim = c(min(na.omit(data)$y),max(na.omit(data)$y)))+
+  geom_line(linewidth=1)+
+  theme_classic()+
+  geom_hline(yintercept = bound, linetype = 2)+
+  geom_hline(yintercept = -bound, linetype = 2)+
+  theme(legend.position="none")+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  #transition_time(x)+
+  #shadow_wake(wake_length = 0.1, alpha = FALSE)+
+  #shadow_mark(alpha = 0.3, size = 0.5)+
+  transition_reveal(x)
+
+q
+```
+
+Lastly we can look at the RT distribution for both lower and upper bound hits for different drift rates:
+
+```{r}
+max_time = seq(500,length.out = 1)
+
+bias = seq(0.5,length.out = 1)
+
+sd = seq(1,length.out = 1)
+
+bound = seq(1,2,length.out = 1)
+
+drift = seq(-1,1,length.out = 5)
+
+replicate = 1:1000
+
+
+params = expand.grid(max_time = max_time,
+                     bias = bias,
+                     sd = sd,
+                     bound = bound,
+                     drift = drift,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+plan(multisession, workers = 4)
+weiners = future_map(data_list, ~make_weiner(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+data = map_dfr(weiners,1)
+
+
+qq = na.omit(data) %>% group_by(col,drift) %>% summarize(x = max(x)) %>% 
+  mutate(upper = ifelse(col < 0, T,F)) %>% ungroup() %>% mutate(frame = 1:nrow(.)) %>% 
+  ggplot(aes(x = x)) + 
+  geom_histogram(aes(fill = upper,bins = 30), position = position_dodge())+
+  theme_classic()+
+  facet_wrap(~drift, labeller = label_both)
+qq
+
+```
+
+```{r}
+
+df = data.frame()
+for(d in drift){
+  df = rbind(df,RWiener::rwiener(1000,alpha = bound,tau = 0.01, beta = bias, delta = d)%>% mutate(drift = d))
+}
+
+
+qq = na.omit(df) %>% 
+  mutate(upper = ifelse(resp == "upper", T,F)) %>% 
+  ggplot(aes(x = q)) + 
+  geom_histogram(aes(fill = upper,bins = 30), position = position_dodge())+
+  theme_classic()+
+  facet_wrap(~drift, labeller = label_both)
+
+
+qq
+```
+
+Lets try and fit this in Stan!
+
+```{r}
+trials = 500
+alpha = 2
+delta = 0.5
+beta = 0.5
+tau = 0.1
+
+
+parameters = data.frame(alpha,delta,beta,tau, trials)
+
+data = rwiener(n = trials,
+        alpha = alpha,
+        delta = delta,
+        beta = beta,
+        tau = tau)
+
+data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                 Nl = nrow(data %>% filter(resp == "lower")),
+                 RTu = data %>% filter(resp == "upper") %>% .$q,
+                 RTl = data %>% filter(resp == "lower") %>% .$q,
+                 minRT = min(data$q),
+                 run_estimation = 1)
+
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","HDDM.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+```
+
+Lets look at the summary of the model
+```{r}
+flextable::flextable(fit$summary() %>% mutate_if(is.numeric, round, digits = 2) %>% head(6))
+```
+Prior posterior updates
+
+```{r}
+posteriors = as_draws_df(fit) %>% dplyr::select(any_of(names(parameters))) %>% mutate(prior = F)
+priors = as_draws_df(fit) %>% dplyr::select(starts_with("prior_")) %>% rename_with(~gsub("^prior_", "", .), everything()) %>% mutate(prior = T)
+
+rbind(posteriors,priors) %>% 
+  pivot_longer(cols = -prior) %>% 
+  ggplot(aes(x = value, fill = prior))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  facet_wrap(~name, scales = "free")+
+  geom_vline(data = parameters %>% select(-trials) %>% pivot_longer(everything()), aes(xintercept = value))
+
+```
+
+
+
+Posterior predictive checks
+
+```{r}
+rt_pattern <- "out\\[\\d+,1\\]"
+choice_pattern <- "out\\[\\d+,2\\]"
+
+
+Rts = fit$summary() %>%
+  filter(grepl(rt_pattern, variable))
+
+
+Rts = as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern))
+
+Rts %>% slice(sample(1:4000,10)) %>% pivot_longer(everything()) %>% ggplot(aes(x = value))+geom_histogram()
+
+choice = fit$summary() %>%
+  filter(grepl(choice_pattern, variable))
+
+choice = as_draws_df(fit$draws()) %>%
+  select(matches(choice_pattern))
+
+
+draws = 10
+#pp_check
+as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern)) %>% slice(sample(1:4000,draws)) %>% 
+  pivot_longer(everything()) %>% mutate(estimated = TRUE, slice = rep(1:trials,draws)) %>% 
+  ggplot()+
+  geom_density(aes(x = value, group = slice), color = "lightblue")+
+  geom_density(data = data %>% mutate(estimated = FALSE), aes(x = q), color = "red")+
+  theme_classic()
+```
+
+
+# Lets do some parameter recovery on this model!
+
+## fit model
+```{r}
+fit_model = function(parameters){
+  id = parameters$id
+  
+  data = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                   Nl = nrow(data %>% filter(resp == "lower")),
+                   RTu = data %>% filter(resp == "upper") %>% .$q,
+                   RTl = data %>% filter(resp == "lower") %>% .$q,
+                   minRT = min(data$q),
+                   run_estimation = 1,
+                   RTbound = 0)
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","HDDM.stan"))
+  
+  
+  fit <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  
+  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  diag = data.frame(fit$diagnostic_summary(), id)
+  
+  data = posteriors %>% mutate(num_div = diag$num_divergent,
+                               tree_depth = diag$num_max_treedepth,
+                               real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               trials = parameters$trials,
+                               id = id) %>% select(-contains("."))
+  return(list(data, diag))
+}
+```
+
+```{r}
+trials = seq(10,100,by = 10)
+alpha = seq(1,5,by = 1)
+delta = seq(-4,4,by = 1)
+beta = seq(0.1,0.9,by = 0.1)
+tau = seq(0.1,0.4,by = 0.1)
+
+parameters = expand.grid(alpha = alpha,delta = delta,beta = beta,tau = tau, trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+```{r}
+# cores = availableCores()-1
+# 
+# plan(multisession, workers = 4)
+# 
+# possfit_model = possibly(.f = fit_model, otherwise = "Error")
+# 
+# fit_model(data_list[[1]])
+# 
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+# 
+# error_indices <- which(results == "Error")
+# 
+# unique(error_indices)
+# 
+# results2 = results[results != "Error"]
+# 
+# results = NULL
+```
+
+
+lets look at the divergences
+```{r}
+load(here::here("DDM_parameter_recovery.RData"))
+
+results2[[2]]
+
+divergence = map_dfr(results2, 2)
+
+divergence %>% median_qi(num_divergent)
+```
+there are none which is good now at the parameter values
+
+```{r, fig.height=10, fig.width=10}
+params = map_dfr(results2, 1)
+
+params %>% filter(variable == "alpha") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_alpha)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_alpha))+
+  facet_wrap(~trials)
+
+params %>% filter(variable == "delta") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_delta)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_delta))+
+  facet_wrap(~trials)
+
+params %>% filter(variable == "tau") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_tau)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_tau))+
+  facet_wrap(~trials)+
+  coord_cartesian(xlim = c(0,.5))
+
+
+params %>% filter(variable == "beta") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_beta)))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_beta))+
+  facet_wrap(~trials)+
+  coord_cartesian(xlim = c(0,1))
+
+
+```
+
+
+
+
+```{r, fig.height=10, fig.width=10}
+
+trialss = c(10,50,100)
+tauss = c(0.12,0.26,0.38)
+betass = c(0.34,0.64,0.85)
+
+params %>% 
+  mutate_if(is.numeric, round, digits = 2) %>% 
+  filter(variable == "delta",
+                  trials %in% trialss,
+                  real_tau %in% tauss,
+                  real_beta %in% betass) %>% 
+  dplyr::rename(r_a = real_alpha) %>% 
+        ggplot(aes(x = mean, y = real_delta, col = real_beta))+
+        facet_grid(trials~r_a, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point(aes(shape = as.factor(real_tau)))+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(-1, 10), xlim = c(-1,10))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+params %>% 
+  mutate_if(is.numeric, round, digits = 2) %>% 
+  filter(variable == "alpha",
+                  trials %in% trialss,
+                  real_tau %in% tauss,
+                  real_beta %in% betass) %>% 
+  dplyr::rename(r_d = real_delta) %>% 
+        ggplot(aes(x = mean, y = real_alpha, col = real_beta))+
+        facet_grid(trials~r_d, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point(aes(shape = as.factor(real_tau)))+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(-1, 10), xlim = c(-1,10))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+Looking at incorpurating reinforment learning!
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+Lets add expectations!
+
+```{r}
+agent_expect = function(parameters){
+set.seed(222)  
+  
+trials_per_reversal = parameters$trials_per_reversal
+n_reversals = parameters$n_reversals
+
+get_u = function(trials_per_reversal){
+  return(u = c(rbinom(trials_per_reversal,1,0.8),
+               rbinom(trials_per_reversal,1,0.2),
+               rbinom(trials_per_reversal,1,0.8),
+               rbinom(trials_per_reversal,1,0.2),
+               rbinom(trials_per_reversal,1,0.8)))
+}
+
+u = get_u(trials_per_reversal)
+
+N = length(u)
+
+stim = rep(rbinom(N,1,0.5))
+
+alpha = parameters$alpha
+delta = parameters$delta
+beta = parameters$beta
+tau = parameters$tau
+lr = parameters$lr
+e0 = parameters$e0
+zeta = parameters$zeta
+nu = parameters$nu
+prec_per = parameters$prec_per
+
+expectation = array(NA, N+1)
+uncertainty = array(NA, N)
+real_resp = array(NA, N)
+mu_per = array(NA, N)
+percept = array(NA, N)
+
+
+expectation[1] = e0
+
+resp = data.frame()
+for(i in 1:N){
+  
+  mu_per[i] = (1-nu)*stim[i]+nu*expectation[i]
+  
+  percept[i] = extraDistr::rprop(1, prec_per, mu_per[i])
+  
+  uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+  
+  resp1 = rwiener(n = 1,
+        alpha = alpha,
+        delta = uncertainty[i],
+        beta = beta,
+        tau = tau)
+  
+  expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+  
+  real_resp[i] = rbinom(1,1,(expectation[i]^zeta)/((expectation[i]^zeta)+(1-expectation[i])^zeta))
+    
+  resp = rbind(resp,resp1)
+}
+
+resp$u = u
+resp$expectation = expectation[1:N]
+resp$uncertainty = uncertainty[1:N]
+resp$real_resp = real_resp
+
+resp$trial = 1:N
+
+resp %>% ggplot(aes(x = trial, y = expectation))+geom_line()+geom_point(aes(x = trial, y = u))
+
+resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
+
+resp = resp %>% mutate(correct = ifelse(real_resp == u, 1, 0))
+
+resp$percept = ifelse(percept < 0.001, 0.001, ifelse(percept > 0.999, 0.999, percept))
+
+resp$stim = stim
+
+return(resp)
+}
+
+
+resp = agent_expect(parameters = data.frame(n_reversals = 2,
+                              trials_per_reversal = 20,
+                              alpha = 1,
+                              lr = 0.3,
+                              delta = 2,
+                              beta = 0.5,
+                              tau = 0.1,
+                              e0 = 0.5,
+                              zeta = 3,
+                              nu = 0.5,
+                              prec_per = 10,
+                              id = 2))
+
+resp %>% ggplot(aes(x = trial, y = percept, col = as.factor(stim)))+geom_point()
+
+resp %>% ggplot(aes(x = expectation, y = percept, col = as.factor(stim)))+geom_point()
+
+
+data_stan = list(Nu = nrow(resp %>% filter(resp == "upper")),
+                 Nl = nrow(resp %>% filter(resp == "lower")),
+                 RTu = resp %>% filter(resp == "upper") %>% .$q,
+                 RTl = resp %>% filter(resp == "lower") %>% .$q,
+                 minRT = min(resp$q),
+                 run_estimation = 1,
+                 trials = nrow(resp),
+                 stim = resp$stim,
+                 percept = resp$percept,
+                 u = resp$u,
+                 indexupper = resp %>% filter(resp == "upper") %>% .$trial,
+                 indexlower = resp %>% filter(resp == "lower") %>% .$trial,
+                 resp = c(resp$resp2,0))
+
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","ERLDDM.stan"))
+
+
+
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 100
+    )
+
+
+flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round, digits = 2) %>% head(8))
+
+```
+
+
+```{r}
+parameter_recovery_expect = function(parameters){
+  
+  resp = agent_expect(parameters)
+  
+  data_stan = list(Nu = nrow(resp %>% filter(resp == "upper")),
+                   Nl = nrow(resp %>% filter(resp == "lower")),
+                   RTu = resp %>% filter(resp == "upper") %>% .$q,
+                   RTl = resp %>% filter(resp == "lower") %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   stim = resp$stim,
+                   percept = resp$percept,
+                   u = resp$u,
+                   indexupper = resp %>% filter(resp == "upper") %>% .$trial,
+                   indexlower = resp %>% filter(resp == "lower") %>% .$trial,
+                   resp = c(resp$resp2,0))
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","ERLDDM.stan"))
+  
+  
+  
+  fit1 <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12,
+      refresh = 100
+      )
+
+
+  posteriors = as_draws_df(fit1$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  
+  diag = data.frame(fit1$diagnostic_summary(), id = parameters$id)
+  
+  data = posteriors %>% mutate(real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               real_lr = parameters$lr,
+                               trials = parameters$n_reversals*parameters$trials_per_reversal,
+                               real_prec_per = parameters$prec_per,
+                               real_nu = parameters$nu,
+                               id = parameters$id)
+  return(list(data, diag))
+  
+}
+```
+
+
+```{r}
+n_reversals = seq(5,length.out = 1)
+#n_reversals = seq(5,length.out = 1)
+
+trials_per_reversal = seq(20, length.out = 1)
+#trials_per_reversal = seq(20, length.out = 1)
+
+
+alpha = seq(0.5,1.5, length.out = 3)
+
+lr = seq(0.1,0.4, length.out = 4)
+
+zeta = seq(3, length.out = 1)
+
+delta  = seq(-2,2,length.out = 4)
+
+beta = seq(0.5,length.out = 1)
+
+tau = seq(0.1, length.out = 1)
+
+e0 = seq(0.5, length.out = 1)
+
+prec_per = seq(1,10, length.out = 3)
+
+nu = seq(0.1,0.4, length.out = 4)
+
+replicate = 1
+
+parameters = expand.grid(n_reversals = n_reversals,
+                         lr= lr,
+                         zeta = zeta,
+                         alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         prec_per = prec_per,
+                         nu = nu,
+                         e0 = e0,
+                         replicate = replicate,
+                         trials_per_reversal = trials_per_reversal) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+```{r}
+# qq = parameter_recovery_expect(data_list[[50]])
+# 
+# cores = availableCores()-1
+# 
+# plan(multisession, workers = cores)
+# 
+# possfit_model = possibly(.f = parameter_recovery_expect, otherwise = "Error")
+# 
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+# 
+# error_indices <- which(results == "Error")
+# 
+# unique(error_indices)
+# 
+# results2 = results[results != "Error"]
+
+```
+
+
+```{r}
+load(here::here("ERLHDDM_workspace.RData"))
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+
+params = map_dfr(results2,1)
+
+params %>% filter(variable == "nu") %>% 
+        ggplot(aes(x = mean, y = real_nu))+
+        theme_classic()+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(0, 1), xlim = c(0,1))
+
+params %>% filter(variable == "nu") %>% 
+        ggplot(aes(x = mean, y = real_nu, col = real_lr))+
+        theme_classic()+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(0, 1), xlim = c(0,1))
+
+params %>% filter(variable == "nu") %>% 
+        ggplot(aes(x = mean, y = real_nu, col = real_lr))+
+        theme_classic()+
+  facet_grid(real_prec_per~real_delta, labeller = label_both)+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(0, 1), xlim = c(0,1))
+
+
+params %>% filter(variable == "nu") %>% 
+        ggplot(aes(x = mean, y = real_nu, col = real_lr))+
+        theme_classic()+
+  facet_grid(real_prec_per~real_alpha, labeller = label_both)+
+  geom_point()+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(0, 1), xlim = c(0,1))
+
+
+
+params %>% filter(variable == "delta") %>% 
+        ggplot(aes(x = mean, y = real_delta, col = real_lr))+
+        theme_classic()+
+  facet_grid(real_prec_per~real_alpha, labeller = label_both)+
+  geom_point()+geom_abline(slope = 1, intercept = 0)
+
+
+
+
+
+```
+
+
