@@ -253,12 +253,12 @@ parameters {
   ///* upper boundary of tau must be smaller than minimum RT
   //to avoid zero likelihood for fast responses.
   //tau can for physiological reasone not be faster than 0.1 s.*/
-
-  real<lower=1, upper=5> alpha;  // boundary separation
+  real<lower=0, upper=10> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
   real delta;  // drift rate
   real tau_raw;  // nondecision time
   real <lower =0, upper = 1> lr;
+
   
 }
 
@@ -284,12 +284,16 @@ transformed parameters{
 }
 
 model {
-  lr ~ beta_proportion(0.5,10);
-  alpha ~ uniform(0.1, 5);
-  beta  ~ uniform(0, 1);
-  delta ~ normal(0, 2);
+  target += beta_proportion_lpdf(lr | 0.3,5);
+  
+  target += normal_lpdf(alpha | 0, 3)-normal_lccdf(0 | 0, 3);
+  
+  target += beta_proportion_lpdf(beta | 0.5, 5);
+  
+  delta ~ normal(0, 3);
+  
   tau_raw ~ normal(0,1);
-
+  
   
   if(run_estimation==1){
     

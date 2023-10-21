@@ -373,7 +373,7 @@ fit_model = function(parameters){
 ```
 
 ```{r}
-trials = seq(10,100,by = 10)
+trials = seq(50,100,by = 10)
 alpha = seq(1,5,by = 1)
 delta = seq(-4,4,by = 1)
 beta = seq(0.1,0.9,by = 0.1)

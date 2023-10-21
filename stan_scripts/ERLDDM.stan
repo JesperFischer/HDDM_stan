@@ -241,6 +241,8 @@ data {
   int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
   array[trials] real u;
   array[trials] real stim;
+  array[trials] int cue;
+  
   array[trials] real percept;
   
   array[trials+1] int resp;
@@ -258,7 +260,7 @@ parameters {
   //to avoid zero likelihood for fast responses.
   //tau can for physiological reasone not be faster than 0.1 s.*/
 
-  real<lower=1, upper=5> alpha;  // boundary separation
+  real<lower=0, upper=10> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
   real delta;  // drift rate
   real tau_raw;  // nondecision time
@@ -272,6 +274,7 @@ parameters {
 transformed parameters{
   array[trials+1] real expect;
   array[trials+1] real uncert;
+  array[trials+1] real belief_to_cold;
   array[trials+1] real deltat;
   array[trials+1] real mu_per;
   
@@ -281,7 +284,13 @@ transformed parameters{
   expect[1] = 0.5;
   for(i in 1:trials){
 
-    mu_per[i] = (1-nu)*stim[i]+nu*expect[i];
+    if(cue[i] == 1)
+      belief_to_cold[i] = expect[i];
+    else
+      belief_to_cold[i] = 1-expect[i];
+
+
+    mu_per[i] = (1-nu)*stim[i]+nu*belief_to_cold[i];
     
     uncert[i] = expect[i] - (1 - expect[i]);
 
@@ -294,13 +303,19 @@ transformed parameters{
 }
 
 model {
-  lr ~ beta_proportion(0.2,10);
-  alpha ~ uniform(0.1, 5);
-  beta  ~ uniform(0, 1);
-  delta ~ normal(0, 2);
+  target += beta_proportion_lpdf(lr | 0.3,5);
+  
+  target += normal_lpdf(alpha | 0, 3)-normal_lccdf(0 | 0, 3);
+  
+  target += beta_proportion_lpdf(beta | 0.5, 5);
+  
+  delta ~ normal(0, 3);
+  
   tau_raw ~ normal(0,1);
+  
   prec_per ~ lognormal(log(10),1);
-  nu ~ beta_proportion(0.2,10);
+  
+  target += beta_proportion_lpdf(nu | 0.2,5);
   
   
   
