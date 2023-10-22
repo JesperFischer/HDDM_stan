@@ -1,11 +1,11 @@
 ---
 title: "RLDMM"
 output:
-  pdf_document: default
   html_document:
     theme: cerulean
     toc: true
     toc_float: true
+  pdf_document: default
   word_document: default
 urlcolor: blue
 date: "2023-07-21"
