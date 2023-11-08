@@ -255,9 +255,11 @@ parameters {
   //tau can for physiological reasone not be faster than 0.1 s.*/
   real<lower=0> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
-  real<lower=0> delta;  // drift rate
+  real delta;  // drift rate
   real tau_raw;  // nondecision time
   real <lower =0, upper = 1> lr;
+  real<lower=0> zeta;  // boundary separation
+  
 
   
 }
@@ -273,7 +275,7 @@ transformed parameters{
   expect[1] = 0.5;
   for(i in 1:trials){
 
-    uncert[i] = expect[i] - (1 - expect[i]);
+    uncert[i] = abs(expect[i] - (1 - expect[i]));
 
     deltat[i] = delta * uncert[i];
     expect[i+1] = expect[i]+lr*(u[i]-expect[i]);
@@ -294,6 +296,8 @@ model {
   
   target += normal_lpdf(tau_raw | 0,1);
   
+  target += normal_lpdf(zeta | 1, 5)-normal_lccdf(1 | 1, 5);
+  
   
   if(run_estimation==1){
     
@@ -304,12 +308,12 @@ model {
     
     for(i in 1:Nl){
       
-      RTl ~ wiener(alpha, tau, beta, deltat[indexlower[i]]);
+      RTl ~ wiener(alpha, tau, 1-beta, -deltat[indexlower[i]]);
     }
     
 
     for(i in 1:trials){
-     resp[i] ~ bernoulli(expect[i]);
+     resp[i] ~ bernoulli((expect[i]^zeta)/((expect[i]^zeta)+(1-expect[i])^zeta));
     }
   }
 }
