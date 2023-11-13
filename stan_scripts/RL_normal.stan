@@ -20,7 +20,7 @@ data {
 // The parameters accepted by the model. Our model
 // accepts two parameters 'mu' and 'sigma'.
 parameters {
-  real<lower=0, upper = 1> alpha;
+  real<lower=0, upper = 1> lr;
   real<lower=0> zeta;
 }
 
@@ -33,7 +33,7 @@ transformed parameters{
   
   for(i in 1:N){
     
-    m[i+1] = m[i]+alpha*(u[i]-m[i]);
+    m[i+1] = m[i]+lr*(u[i]-m[i]);
     
     p_resp[i] = (inv_logit(m[i])^zeta)/((inv_logit(m[i])^zeta)+(1-inv_logit(m[i]))^zeta);
   }
@@ -45,7 +45,7 @@ transformed parameters{
 // and standard deviation 'sigma'.
 model {
   
-  alpha ~ beta_proportion(0.5,5);
+  lr ~ beta_proportion(0.3,5);
   zeta ~ lognormal(log(10),0.5);
 
   
@@ -56,6 +56,14 @@ model {
 
 
 generated quantities{
+  real prior_lr;
+  real prior_zeta;
+  
+  prior_lr = beta_proportion_rng(0.3,5);
+  prior_zeta = lognormal_rng(log(10),0.5);
+  
+  
+  
   vector[N] log_lik;
   
   for(i in 1:N){

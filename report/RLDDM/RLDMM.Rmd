@@ -20,7 +20,7 @@ date: "2023-07-21"
 
 ```{r setup, include=FALSE,warning=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, bayesplot)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, bayesplot, loo, patchwork)
 
 ```
 
@@ -37,7 +37,6 @@ where $\delta_i$ is the drift rate on the given trial and $\delta_s$ is the subj
 # linear ddm
 ```{r}
 
-mod <- cmdstan_model(here::here("stan_scripts","RLHDMM_rng.stan"))
 N = 400
 
 u = c()
@@ -94,6 +93,13 @@ resp$uncertainty = uncertainty[1:N]
 resp$trial = 1:N
 
 resp$respx = respx[1:N]
+
+resp$lr = lr
+resp$alpha = alpha
+resp$beta = beta
+resp$tau = tau
+resp$delta = delta
+
 ```
 
 Lets now plot what this entails. The interesting part is how the behavior changes to see that the model makes sense! Here we then plot the expectation as a function of reaction times. However first we can plot how the expectation changes along with trials and inputs (U). Here the unputs are the red dots and the responses are the red dots and the black line is the the expectation.
@@ -178,7 +184,9 @@ mcmc_trace(fit1$draws(variables = variables))
 #fit1 <- readRDS(here::here("models","RLDDM_model.RDS"))
 
 
-as_draws_df(fit1$draws(variables = c("delta","lr","alpha"))) %>% ggplot(aes(x = delta, y = lr))+geom_point()
+as_draws_df(fit1$draws(variables = c("delta","lr","alpha"))) %>% 
+  ggplot(aes(x = delta, y = lr))+
+  geom_point()
 
 ```
 
@@ -188,6 +196,34 @@ Lets look at the summary
 ```{r}
 flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round,2) %>% head(10))
 ```
+```{r}
+variables = c("delta","lr","alpha","beta","tau")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = variables,
+                               value = as.vector(unlist(resp %>% select(variables) %>% 
+                                                          slice(1)))),
+             aes(xintercept = value), linetype = 2)
+
+
+
+```
+
+
 
 Predictive checks?
 
@@ -270,6 +306,72 @@ rts = map_dfr(results,1)
 
 rts %>% ggplot()+geom_density(aes(x = predictedRT, group = draw), col = "lightblue")+geom_density(data = resp, aes(x = q), col = "red")+theme_classic()
 ```
+
+## Standard RL
+Now lets see what a model that instead of using the drift diffusion model just models the learning based on what is normally done i.e. A Rescorla Wagner learning model with a inverse decision temperature:
+
+```{r}
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RL_normal.stan"))
+
+
+data_stan = list(N = nrow(resp),
+                 u = resp$u,
+                 linear = linear,
+                 resp = resp$resp2)
+
+
+
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+    )
+
+variables = c("lr","zeta")
+mcmc_pairs(fit1$draws(variables = variables), np = nuts_params(fit1), pars = variables,
+                           off_diag_args = list(size = 0.75))
+
+mcmc_trace(fit1$draws(variables = variables))
+```
+
+```{r}
+flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round,2) %>% head(5))
+```
+
+```{r}
+
+
+variables = c("lr","zeta")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = c("lr","zeta"), value = c(lr,NA)), aes(xintercept = value), linetype = 2)
+
+```
+Interrestingly the 
+
+
+
+
+
 
 ## Non linear driftrate (bernoulli variance)
 

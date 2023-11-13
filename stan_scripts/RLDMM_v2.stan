@@ -1,3 +1,12 @@
+functions{
+  real normal_lub_rng(real mu, real sigma, real lb, real ub) {
+    real p_lb = normal_cdf(lb| mu, sigma);
+    real p_ub = normal_cdf(ub| mu, sigma);
+    real u = uniform_rng(p_lb, p_ub);
+    real y = mu + sigma * inv_Phi(u);
+    return y;
+  }
+}
 
 // based on codes/comments by Guido Biele, Joseph Burling, Andrew Ellis, and potentially others @ Stan mailing lists
 data {
@@ -73,7 +82,7 @@ model {
   
   target += beta_proportion_lpdf(lr | 0.3,5);
   
-  target += normal_lpdf(alpha | 1, 5)-normal_lccdf(1 | 1, 5);
+  target += normal_lpdf(alpha | 1, 5)-normal_lccdf(0 | 1, 5);
   
   target += beta_proportion_lpdf(beta | 0.5, 10);
   
@@ -102,6 +111,30 @@ model {
 
 
 generated quantities{
+  
+  real prior_lr;
+  real prior_alpha;
+  real prior_beta;
+  real prior_delta;
+  real prior_tau;
+  real prior_tau_raw;
+  
+  
+  prior_lr = beta_proportion_rng(0.3,5);
+  prior_alpha = normal_lub_rng(1,5,0,10000);
+  prior_beta = beta_proportion_rng(0.5,10);
+  
+  
+  if(linear){
+   prior_delta = normal_rng(0, 20);
+  }else if(!linear){
+   prior_delta = normal_rng(0, 20);
+  }
+  prior_tau_raw = normal_rng(0,1);
+  
+  prior_tau = inv_logit(prior_tau_raw) * minRT;
+  
+  
   vector[trials] log_lik;
   int c;
   log_lik = rep_vector(0.0, trials);

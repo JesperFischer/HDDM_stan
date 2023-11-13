@@ -8,7 +8,7 @@ date: "2023-10-22"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, bayesplot, loo, patchwork)
 
 ```
 
@@ -17,18 +17,15 @@ pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstan
 
 ```{r ERLDMM}
 agent_expect = function(parameters){
-  trials_per_reversal = parameters$trials_per_reversal
   
-  get_u = function(trials_per_reversal){
-    return(u = c(rbinom(trials_per_reversal,1,0.8),
-                 rbinom(trials_per_reversal,1,0.2),
-                 rbinom(trials_per_reversal,1,0.8),
-                 rbinom(trials_per_reversal,1,0.2),
-                 rbinom(trials_per_reversal,1,0.8)))
+  N = 400
+  
+  u = c()
+  for(i in 1:(N/100)){
+    u1 = c(rbinom(25,1,0.8),rbinom(25,1,0.2),rbinom(25,1,0.8),rbinom(25,1,0.5))
+    u = c(u,u1)
   }
-  
-  u = get_u(trials_per_reversal)
-  
+
   N = length(u)
   
   
@@ -45,8 +42,8 @@ agent_expect = function(parameters){
   beta = parameters$beta
   tau = parameters$tau
   lr = parameters$lr
+#  zeta = parameters$zeta
   e0 = parameters$e0
-  zeta = parameters$zeta
   nu = parameters$nu
   prec_per = parameters$prec_per
   
@@ -79,7 +76,7 @@ agent_expect = function(parameters){
     
     expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
     
-    real_resp[i] = rbinom(1,1,(expectation[i]^zeta)/((expectation[i]^zeta)+(1-expectation[i])^zeta))
+    #real_resp[i] = rbinom(1,1,(expectation[i]^zeta)/((expectation[i]^zeta)+(1-expectation[i])^zeta))
       
     resp = rbind(resp,resp1)
   }
@@ -87,11 +84,11 @@ agent_expect = function(parameters){
   resp$u = u
   resp$expectation = expectation[1:N]
   resp$uncertainty = uncertainty[1:N]
-  resp$real_resp = real_resp
+  #resp$real_resp = real_resp
   
   resp$trial = 1:N
   
-  resp %>% ggplot(aes(x = trial, y = expectation))+geom_line()+geom_point(aes(x = trial, y = u))
+  #resp %>% ggplot(aes(x = trial, y = expectation))+geom_line()+geom_point(aes(x = trial, y = u))
   
   resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
   
@@ -110,14 +107,23 @@ agent_expect = function(parameters){
   resp$cue2 = cue
   
   
+  resp$lr = lr
+  resp$alpha = alpha
+  resp$beta = beta
+  resp$tau = tau
+  resp$delta = delta
+  resp$nu = nu
+  resp$prec_per = prec_per
+
+  
   return(resp)
 }
 ```
 
 
 ```{r}
-resp = agent_expect(parameters = data.frame(trials_per_reversal = 30,
-                              alpha = 4,
+resp = agent_expect(parameters = data.frame(
+                              alpha = 2,
                               lr = 0.2,
                               delta = 2,
                               beta = 0.5,
@@ -128,52 +134,218 @@ resp = agent_expect(parameters = data.frame(trials_per_reversal = 30,
                               prec_per = 10,
                               id = 2))
 
-resp %>% ggplot(aes(x = belief_to_stim_cold, y = percept, col = as.factor(stim)))+geom_point()+geom_smooth(method = "lm")
+resp %>% 
+  ggplot(aes(x = belief_to_stim_cold, y = percept, col = as.factor(stim)))+
+  geom_point()+
+  geom_smooth(method = "lm")
 
-resp %>% ggplot(aes(x = expectation, y = q))+geom_point()+geom_smooth()
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  geom_smooth()
+
+resp %>% ggplot()+
+  geom_point(aes(x = trial, y = resp2))+
+  geom_line(aes(x = trial, y = expectation))+
+  theme_classic()
+
+resp %>% ggplot()+
+  geom_boxplot(aes(x = as.factor(stim2), y = percept))+
+  theme_classic()
+
+
 ```
 
 
 ```{r}
-data_stan = list(Nu = nrow(resp %>% filter(resp == "upper")),
-                 Nl = nrow(resp %>% filter(resp == "lower")),
-                 RTu = resp %>% filter(resp == "upper") %>% .$q,
-                 RTl = resp %>% filter(resp == "lower") %>% .$q,
+
+data_stan = list(RT = resp %>% .$q,
+                 stim = resp %>% .$stim2,
+                 cue = resp %>% .$cue2,
+                 percept = resp %>% .$percept,
                  minRT = min(resp$q),
                  run_estimation = 1,
                  trials = nrow(resp),
-                 stim = resp$stim2,
-                 cue = resp$cue2,
-                 percept = resp$percept,
                  u = resp$u,
-                 indexupper = resp %>% filter(resp == "upper") %>% .$trial,
-                 indexlower = resp %>% filter(resp == "lower") %>% .$trial,
+                 linear = T,
                  resp = c(resp$resp2,0))
+
+
 
 
 mod = cmdstanr::cmdstan_model(here::here("stan_scripts","ERLDDM.stan"))
 
 
 
- # fit1 <- mod$sample(
- #     data = data_stan,
- #     chains = 4,
- #     parallel_chains = 4,
- #     adapt_delta = 0.8,
- #     max_treedepth = 10,
- #     refresh = 10
- #     )
-# 
-# 
-# 
-# fit1$save_object(here::here("models","ERLDDM_model.RDS"))
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.8,
+    max_treedepth = 10,
+    refresh = 100
+    )
 
-fit1 <- readRDS(here::here("models","ERLDDM_model.RDS"))
 
-flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round, digits = 2) %>% head(8))
+
+variables = c("delta","lr","alpha","beta","tau","nu","prec_per")
+mcmc_pairs(fit1$draws(variables = variables),
+           np = nuts_params(fit1), pars = variables,
+           off_diag_args = list(size = 0.75))
+
+mcmc_trace(fit1$draws(variables = variables))+
+  theme_classic()
 
 ```
 
+
+```{r}
+flextable::flextable(data.frame(fit1$summary()) %>% 
+                       mutate_if(is.numeric, round, digits = 2) %>% 
+                       head(8))
+```
+
+
+```{r}
+variables = c("delta","lr","alpha","beta","tau","nu","prec_per")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = variables,
+                               value = as.vector(unlist(resp %>% select(variables) %>% 
+                                                          slice(1)))),
+             aes(xintercept = value), linetype = 2)
+
+
+
+```
+
+
+```{r}
+draww = rbinom(1,4000,extraDistr::rprop(1,1,0.5))
+
+deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+  pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+  mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+
+
+
+parameters = as_draws_df(fit1$draws()) %>% 
+  select(matches(c("alpha","tau","beta"))) %>% 
+  mutate(tau_raw = NULL) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww)
+
+
+df = inner_join(deltas, parameters)
+
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% select(-matches("^prior_")) %>% 
+  rowwise() %>% 
+  mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+
+resp %>% ggplot(aes(x = uncertainty, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT, col = predictedresp))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+```
+
+```{r}
+library(posterior)
+
+n_check = 25
+
+get_pp = function(draww){
+  draww = draww$draww
+  deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+    pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+    mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+  
+  
+  
+  parameters = as_draws_df(fit1$draws()) %>% select(matches(c("alpha","tau","beta"))) %>% mutate(tau_raw = NULL) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww)
+  
+  
+  df = inner_join(deltas, parameters) %>% 
+    rowwise() %>% 
+    mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],
+           predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]],
+           draw = draww)
+  return(list(df))
+}
+
+draww = rbinom(n_check,4000,extraDistr::rprop(n_check,1,0.5))
+
+
+parameters = expand.grid(draww = draww) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+results <- future_map(data_list, ~get_pp(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+rts = map_dfr(results,1)
+
+rts %>% ggplot()+
+  geom_density(aes(x = predictedRT, group = draw),col = "lightblue")+
+  geom_density(data = resp, aes(x = q),col = "red")+
+  theme_classic()
+```
+
+```{r}
+
+variables = c("delta","lr","alpha","beta","tau")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = variables,
+                               value = as.vector(unlist(resp %>% select(variables) %>% 
+                                                          slice(1)))),
+             aes(xintercept = value), linetype = 2)
+
+
+```
 
 ```{r}
 parameter_recovery_expect = function(parameters){

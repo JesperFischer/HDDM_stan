@@ -1,251 +1,34 @@
-functions {
-  real fs_cdf(real t, real a) {
-    if (a < 1) {
-      reject("a must be >= 1, found a = ", a);
-    }
-    
-    return erfc(inv_sqrt(2 * a * t));
-  }
-  
-  vector make_vars(real mu) {
-    real mu2 = pow(mu, 2);
-    real t_tilde = 0.12 + 0.5 * exp(-mu2 / 3);
-    real a = (3 + sqrt(9 + 4 * mu2)) / 6;
-    real sqrtamu = sqrt((a - 1) * mu2 / a);
-    real fourmu2pi = (4 * mu2 + pi() ^ 2) / 8;
-    real Cf1s = sqrt(a) * exp(-sqrtamu);
-    real Cf1l = pi() / (4 * fourmu2pi);
-    real CF1st = Cf1s * fs_cdf(t_tilde | a);
-    real F1lt = -expm1(-t_tilde * fourmu2pi);
-    real F1inf = CF1st + Cf1l * (1 - F1lt);
-    
-    return [mu2, //.......1
-            t_tilde, //.. 2
-            a, //.........3
-            sqrtamu, //...4
-            fourmu2pi, //.5
-            Cf1s, //......6
-            Cf1l, //......7
-            CF1st, //.....8
-            F1lt, //......9
-            F1inf]'; //...10
-  }
-  
-  int acceptt_rng(real t_star, real ft, real c) {
-    if (c <= 0.06385320297074884) {
-      reject("c is ", c);
-    }
-    if (is_nan(c)) {
-      reject("c is nan!");
-    }
-    real z = ft * uniform_rng(0, 1);
-    real b = exp(-c);
-    int k = 3;
-    
-    while (1) {
-      if (z > b) {
-        return 0;
-      }
-      b -= k * exp(-c * k ^ 2);
-      if (z < b) {
-        return 1;
-      }
-      k += 2;
-      b += k * exp(-c * k ^ 2);
-      k += 2;
-    }
-    
-    return 0;
-  }
-  
-  real sample_small_mu_rng(vector vars) {
-    real t_star;
-    real pi_sq = pi() ^ 2;
-    
-    real mu2 = vars[1];
-    real a = vars[3];
-    real sqrtamu = vars[4];
-    real fourmu2pi = vars[5];
-    real Cf1s = vars[6];
-    real Cf1l = vars[7];
-    real CF1st = vars[8];
-    real F1lt = vars[9];
-    real F1inf = vars[10];
-    
-    int counter_outer = 0;
-    while (1) {
-      real p = F1inf * uniform_rng(0, 1);
-      
-      if (p <= CF1st) {
-        t_star = 1. / (2 * a * pow(inv_erfc(p / Cf1s), 2));
-        while (0.5 * t_star <= 0.06385320297074884) {
-          p = uniform_rng(0.06385320297074884, CF1st);
-          t_star = 1. / (2 * a * pow(inv_erfc(p / Cf1s), 2));
-        }
-        real ft = exp(-1. / (2 * a * t_star) - sqrtamu + mu2 * t_star);
-        if (acceptt_rng(t_star, ft, 0.5 * t_star) == 1) {
-          return t_star;
-        }
-      } else {
-        t_star = -log1p(-(p - CF1st) / Cf1l - F1lt) / fourmu2pi;
-        real pisqt = pi_sq * t_star / 8;
-        while (pisqt <= 0.06385320297074884) {
-          p = uniform_rng(CF1st, F1inf);
-          t_star = -log1p(-(p - CF1st) / Cf1l - F1lt) / fourmu2pi;
-          pisqt = pi_sq * t_star / 8;
-        }
-        if (acceptt_rng(t_star, exp(-pisqt), pisqt) == 1) {
-          return t_star;
-        }
-      }
-    }
-    return 0;
-  }
-  
-  real inverse_gaussian_rng(real mu, real mu_sq) {
-    real v = pow(std_normal_rng(), 2);
-    real z = uniform_rng(0, 1);
-    real x = mu + 0.5 * mu_sq * v - 0.5 * mu * sqrt(4 * mu * v + mu_sq * v ^ 2);
-    if (z <= (mu / (mu + x))) {
-      return x;
-    } else {
-      return mu_sq / x;
-    }
-  }
-  
-  real sample_large_mu_rng(vector vars) {
-    real mu2 = vars[1];
-    real t_tilde = vars[2];
-    real a = vars[3];
-    real sqrtamu = vars[4];
-    real fourmu2pi = vars[5];
-    real Cf1s = vars[6];
-    real Cf1l = vars[7];
-    real CF1st = vars[8];
-    real F1lt = vars[9];
-    real F1inf = vars[10];
-    
-    real invabsmu = inv_sqrt(mu2);
- 
-    if (t_tilde >= 0.63662) {
-      Cf1l = -log(pi() * 0.25) - 0.5 * log(2 * pi());
-      Cf1s = 0;
-    } else {
-      Cf1l = -pi() ^ 2 * t_tilde / 8 + (3. / 2.) * log(t_tilde) + 0.5 * inv(t_tilde);
-      Cf1s = Cf1l + 0.5 * log(2 * pi()) + log(pi() * 0.25);
-    }
-    
-    while (1) {
-      real t_star = inverse_gaussian_rng(invabsmu, inv(mu2));
-      if (is_nan(t_star)) {
-        reject("t_star is nan! ", mu2);
-      }
-      real one2t = 0.5 * inv(t_star);
-      if (t_star <= 2.5) {
-        real expone2t = exp(Cf1s - one2t);
-        if (expone2t == 0) {
-          expone2t = 1e-8;
-        }
-        if (acceptt_rng(t_star, expone2t, one2t) == 0 || invabsmu < 0.000666) {
-          return t_star;
-        }
-      } else {
-        real expone2t = exp(-log(pi() / 4) - 0.5 * log(2 * pi()) - one2t - (3. / 2.) * log(t_star));
-        if (acceptt_rng(t_star, expone2t, pi() ^ 2 * t_star / 8) == 0) {
-          return t_star;
-        }
-      }
-    }
-    return 0;
-  }
-  
-  real fast_pt_rng(real alpha, real tau, real beta, real delta) {
-    real absmu = abs(delta) ;
-    vector[10] vars = make_vars(absmu);
-    real pt;
-    
-    if (absmu < 1) {
-      pt = sample_small_mu_rng(vars);
-    } else {
-      pt = sample_large_mu_rng(vars);
-    }
-    
-    return pt;
-  }
-  
-  vector wiener_rng(real alpha, real tau, real beta, real delta) {
-    real t = 0 ;
-    real sign_delta = delta > 0 ? 1 : -1;
-    real x =  beta * alpha ;
-    real mu = abs(delta);
-    real hit_bound;
-    vector[2] out;
-    int counter = 0;
-    
-    if (beta == 0 || beta == 1) {
-      return [tau, beta]';
-    }
-
-    while (1) {
-      real mutheta;
-      real xlo =  x ;
-      real xhi = alpha - x ;
-      // lower bound is 0 
-      // upper bound is alpha in stan parmeterization
-      
-      // symmetric case, [x - xup, x + xup]
-      if (abs(xlo - xhi) < 1e-6) {
-        mutheta = xhi * mu;
-        real pt = fast_pt_rng(alpha, tau, beta, xhi * abs(delta));
-        hit_bound = sign_delta == 1 ? inv_logit( 2 * mutheta ) : 1 - inv_logit( 2 * mutheta );
-        real bound = uniform_rng(0, 1) < hit_bound ? 1 : 0;
-        return [ tau + t  + ( square(xhi)  * pt), bound]';
-      // x is closer to upper bound, [x - xup, x + xup]
-      } else if (xlo > xhi) {
-        mutheta = xhi * mu;
-        t += ( square(xhi ) * fast_pt_rng(alpha, tau, beta, xhi* abs(delta)))  ;
-        hit_bound = sign_delta == 1 ? inv_logit( 2 * mutheta ) : 1 - inv_logit( 2 * mutheta );
-        if (uniform_rng(0, 1) < hit_bound ) {
-          return [tau + t, 1]';
-        }
-        x -= xhi ;
-      } else {
-       // x is closer to lower bound, [x - xlo, x + xlo]
-        mutheta = xlo * mu ;
-        t +=  ( square(xlo ) * fast_pt_rng(alpha, tau,  beta, xlo* abs(delta) )) ;
-        hit_bound = sign_delta == 1 ? inv_logit( 2 * mutheta ) : 1 - inv_logit( 2 * mutheta );
-        if (uniform_rng(0, 1) > hit_bound) {
-          out[1] = tau + t;
-          out[2] = 0 ;
-          break;
-        }
-        x += xlo ;
-      }
-    }
-    return out;
+functions{
+  real normal_lub_rng(real mu, real sigma, real lb, real ub) {
+    real p_lb = normal_cdf(lb | mu, sigma);
+    real p_ub = normal_cdf(ub | mu, sigma);
+    real u = uniform_rng(p_lb, p_ub);
+    real y = mu + sigma * inv_Phi(u);
+    return y;
   }
 }
 
-
 // based on codes/comments by Guido Biele, Joseph Burling, Andrew Ellis, and potentially others @ Stan mailing lists
 data {
-  int<lower=0> Nu; // of upper boundary responses
-  int<lower=0> Nl; // of lower boundary responses
-  int<lower=0> trials;
   
-  array[Nu] int<lower=0> indexupper;
-  array[Nl] int<lower=0> indexlower;  
-  array[Nu] real RTu;    // upper boundary response times
-  array[Nl] real RTl;    // lower boundary response times
-  real minRT;      // minimum RT of the observed data
+  int<lower=0> trials;
+  real minRT;                        // minimum RT of the observed data
+  vector[trials] RT;
+  
   int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
-  array[trials] real u;
+  
+  vector[trials] u;
+  
+  array[trials+1] int resp;
+  
+  int<lower = 0, upper = 1> linear; // a switch to evaluate the likelihood
+  
+  
   array[trials] real stim;
   array[trials] int cue;
   
   array[trials] real percept;
-  
-  array[trials+1] int resp;
+
 
 }
 
@@ -273,10 +56,10 @@ parameters {
 
 transformed parameters{
   array[trials+1] real expect;
-  array[trials+1] real uncert;
-  array[trials+1] real belief_to_cold;
-  array[trials+1] real deltat;
-  array[trials+1] real mu_per;
+  array[trials] real uncert;
+  array[trials] real belief_to_cold;
+  array[trials] real deltat;
+  array[trials] real mu_per;
   
   
   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
@@ -303,17 +86,23 @@ transformed parameters{
 }
 
 model {
+  int c;
+
   target += beta_proportion_lpdf(lr | 0.3,5);
   
-  target += normal_lpdf(alpha | 0, 3)-normal_lccdf(0 | 0, 3);
+  target += normal_lpdf(alpha | 1, 5)-normal_lccdf(0 | 1, 5);
   
-  target += beta_proportion_lpdf(beta | 0.5, 5);
+  target += beta_proportion_lpdf(beta | 0.5, 10);
   
-  delta ~ normal(0, 3);
+  if(linear){
+   target += normal_lpdf(delta | 0, 20);
+  }else if(!linear){
+   target += normal_lpdf(delta | 0, 20);
+  }
   
-  tau_raw ~ normal(0,1);
+  target += normal_lpdf(tau_raw | 0,1);
   
-  prec_per ~ lognormal(log(10),1);
+  target += lognormal_lpdf(prec_per | log(10),1);
   
   target += beta_proportion_lpdf(nu | 0.2,5);
   
@@ -321,32 +110,65 @@ model {
   
   if(run_estimation==1){
     
-    for(i in 1:Nu){
-      
-      RTu ~ wiener(alpha, tau, beta, deltat[indexupper[i]]);
-    }
-    
-    for(i in 1:Nl){
-      
-      RTl ~ wiener(alpha, tau, 1-beta, -deltat[indexlower[i]]);
-    }
-    
-
     for(i in 1:trials){
-     resp[i] ~ bernoulli(expect[i]);
-     percept[i] ~ beta_proportion(mu_per[i],prec_per);
+      c = resp[i];
+      target += beta_proportion_lpdf(percept[i] | mu_per[i],prec_per);
+      if(c == 1){
+        target += wiener_lpdf(RT[i] | alpha, tau, beta, deltat[i]); 
+      } else {
+        target += wiener_lpdf(RT[i] | alpha, tau, 1-beta, -deltat[i]);
+        }
     }
   }
 }
 
+generated quantities{
+  
+  vector[trials] log_lik;
 
-generated quantities {
+  real prior_lr;
+  real prior_alpha;
+  real prior_beta;
+  real prior_delta;
+  real prior_tau;
+  real prior_tau_raw;
+  real prior_prec_per;
+  real prior_nu;
+  int c;
   
-  array[trials] vector[2] out;
+  vector[trials] pred_percept;
+
   
-  for (n in 1 : trials) {
-    out[n] = wiener_rng(alpha, tau, beta, deltat[n]);
+  
+  prior_prec_per = lognormal_rng(log(10),1);
+  prior_nu = beta_proportion_rng(0.2,5);
+  
+  prior_lr = beta_proportion_rng(0.3,5);
+  
+  prior_alpha = normal_lub_rng(1,5,0,10000);
+  
+  prior_beta = beta_proportion_rng(0.5,10);
+  
+  
+  if(linear){
+   prior_delta = normal_rng(0, 20);
+  }else if(!linear){
+   prior_delta = normal_rng(0, 20);
   }
-
-
+  prior_tau_raw = normal_rng(0,1);
+  
+  prior_tau = inv_logit(prior_tau_raw) * minRT;
+  
+  log_lik = rep_vector(0.0, trials);
+  
+  for(i in 1:trials){
+      c = resp[i];
+      pred_percept[i] = beta_proportion_rng(mu_per[i],prec_per);
+      log_lik[i] += beta_proportion_lpdf(percept[i] | mu_per[i],prec_per);
+    if(c == 1){
+      log_lik[i] += wiener_lpdf(RT[i] | alpha, tau, beta, deltat[i]); 
+    } else {
+      log_lik[i] += wiener_lpdf(RT[i] | alpha, tau, 1-beta, -deltat[i]);
+      }
+  }
 }
