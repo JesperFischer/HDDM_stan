@@ -1,0 +1,253 @@
+---
+title: "fitting ddm"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-10-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr)
+
+```
+
+## R Markdown
+
+Lets try and fit this in Stan Hierarchically!
+```{r}
+trials = 200
+subjects = 10
+
+mu_alpha = 3
+sd_alpha = 0.2
+
+mu_delta = 1
+sd_delta = 0.5
+
+mu_beta = 0.5
+sd_beta = 0.1
+
+mu_tau = 0.2
+sd_tau = 0.1
+
+alphas = array(NA,subjects)
+deltas = array(NA,subjects)
+betas = array(NA,subjects)
+taus = array(NA,subjects)
+trials = rep(trials,subjects)
+
+alphas = truncnorm::rtruncnorm(subjects,0,Inf,mu_alpha, sd_alpha)
+deltas = rnorm(subjects,mu_delta, sd_delta)
+betas = brms::inv_logit_scaled(rnorm(subjects,mu_beta, sd_beta))
+taus = truncnorm::rtruncnorm(subjects,0,Inf,mu_tau, sd_tau)
+
+
+
+apply_rwiener <- function(index, n, alpha, delta, beta, tau) {
+  
+  result <- rwiener(n = n,
+                    alpha = alpha,
+                    delta = delta,
+                    beta = beta,
+                    tau = tau)
+  
+  result_df <- data.frame(index = index,
+                          alpha = alpha,
+                          trials = n,
+                          beta = beta,
+                          tau = tau,
+                          delta = delta,
+                          result)
+  return(result_df)
+}
+
+# Applying the function to each element of the vectors
+results_list <- mapply(apply_rwiener,
+                       index = 1:length(trials), 
+                       n = trials,
+                       alpha = alphas,
+                       delta = deltas, 
+                       beta = betas,
+                       tau = taus,
+                       SIMPLIFY = FALSE)
+
+#getting the results in a dataframe
+result_df <- do.call(rbind, results_list)
+
+
+
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hier","Hier_ddm.stan"))
+
+data_stan = list(trials = nrow(result_df),
+                S = length(unique(result_df$index)),
+                S_id = result_df$index,
+                minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
+                RT = result_df$q,
+                resp = result_df %>% .$resp
+)
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    refresh = 10,
+    max_treedepth = 12,
+    init = 0)
+```
+
+Lets look at the summary of the model
+```{r}
+flextable::flextable(fit$summary() %>% mutate_if(is.numeric, round, digits = 2) %>% head(10))
+```
+Prior posterior updates
+
+```{r}
+variables = c("gm[1]","gm[2]","gm[3]","gm[4]",
+               "tau_u[1]","tau_u[2]","tau_u[3]","tau_u[4]")
+
+posteriors = as_draws_df(fit$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()
+```
+
+
+
+Posterior predictive checks
+
+```{r}
+rt_pattern <- "out\\[\\d+,1\\]"
+choice_pattern <- "out\\[\\d+,2\\]"
+
+
+Rts = fit$summary() %>%
+  filter(grepl(rt_pattern, variable))
+
+
+Rts = as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern))
+
+Rts %>% slice(sample(1:4000,10)) %>% pivot_longer(everything()) %>% ggplot(aes(x = value))+geom_histogram()
+
+choice = fit$summary() %>%
+  filter(grepl(choice_pattern, variable))
+
+choice = as_draws_df(fit$draws()) %>%
+  select(matches(choice_pattern))
+
+
+draws = 10
+#pp_check
+as_draws_df(fit$draws()) %>%
+  select(matches(rt_pattern)) %>% slice(sample(1:4000,draws)) %>% 
+  pivot_longer(everything()) %>% mutate(estimated = TRUE, slice = rep(1:trials,draws)) %>% 
+  ggplot()+
+  geom_density(aes(x = value, group = slice), color = "lightblue")+
+  geom_density(data = data %>% mutate(estimated = FALSE), aes(x = q), color = "red")+
+  theme_classic()
+```
+
+
+# Lets do some parameter recovery on this model!
+
+## fit model
+```{r}
+fit_model = function(parameters){
+  id = parameters$id
+  
+  data = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
+                   Nl = nrow(data %>% filter(resp == "lower")),
+                   RTu = data %>% filter(resp == "upper") %>% .$q,
+                   RTl = data %>% filter(resp == "lower") %>% .$q,
+                   minRT = min(data$q),
+                   run_estimation = 1,
+                   RTbound = 0)
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","HDDM.stan"))
+  
+  
+  fit <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  
+  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  diag = data.frame(fit$diagnostic_summary(), id)
+  
+  data = posteriors %>% mutate(num_div = diag$num_divergent,
+                               tree_depth = diag$num_max_treedepth,
+                               real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               trials = parameters$trials,
+                               id = id) %>% select(-contains("."))
+  return(list(data, diag))
+}
+```
+
+```{r}
+trials = seq(50,100,by = 10)
+alpha = seq(1,4,by = 1)
+delta = seq(-3,3,by = 1)
+beta = seq(0.2,0.8,by = 0.1)
+tau = seq(0.1,0.4,by = 0.1)
+
+replicate = 1:1
+
+parameters = expand.grid(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+```{r}
+#cores = availableCores()-1
+# 
+# plan(multisession, workers = 10)
+# 
+# possfit_model = possibly(.f = fit_model, otherwise = "Error")
+# 
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+# 
+# error_indices <- which(results == "Error")
+# 
+# unique(error_indices)
+# 
+# results2 = results[results != "Error"]
+# 
+# results = NULL
+```
