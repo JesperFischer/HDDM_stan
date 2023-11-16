@@ -61,13 +61,13 @@ model {
 
 
   target += normal_lpdf(gm[1] | 0,4); //global mean of delta
-  target += normal_lpdf(gm[2] | log(1),2); //global mean of delta evaluated on the log scale as we exponentitate it.
+  target += normal_lpdf(gm[2] | log(3),0.6); //global mean of alpha evaluated on the log scale as we exponentitate it.
   
-  target += normal_lpdf(gm[3] | 0, 2); //global mean for beta where its inv_logit transformed i.e. 0 here is 0.5 bias
+  target += normal_lpdf(gm[3] | 0, 1); //global mean for beta where its inv_logit transformed i.e. 0 here is 0.5 bias
   target += normal_lpdf(gm[4] | 0, 2); //global mean for the tau parameter also inv_logit transformed
   
   target += std_normal_lpdf(to_vector(z_expo));
-  target += normal_lpdf(tau_u | 0, 5)-normal_lccdf(0 | 0, 5);
+  target += normal_lpdf(tau_u | 0, 3)-normal_lccdf(0 | 0, 3);
   target += lkj_corr_cholesky_lpdf(L_u | 2);
 
   
@@ -109,15 +109,15 @@ generated quantities{
   
   
   prior_gm[1] = normal_rng(0,4);
-  prior_gm[2] = normal_rng(log(1),2);
-  prior_gm[3] = normal_rng(0,2);
+  prior_gm[2] = normal_rng(log(3),0.6);
+  prior_gm[3] = normal_rng(0,1);
   prior_gm[4] = normal_rng(0,2);
   
   
   
   for(p in 1:4){
-    prior_tau_u[p] = normal_lub_rng(0, 5, 0, 100000000);
-}
+    prior_tau_u[p] = normal_lub_rng(0, 3, 0, 100000000);
+  }
   prior_L_u = lkj_corr_cholesky_rng(4,2);
   
   for(i in 1:4){

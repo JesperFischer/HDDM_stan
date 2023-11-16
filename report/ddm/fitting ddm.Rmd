@@ -132,7 +132,7 @@ fit_model = function(parameters){
                    RTbound = 0)
   
   
-  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","HDDM.stan"))
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","ddm.stan"))
   
   
   fit <- mod$sample(

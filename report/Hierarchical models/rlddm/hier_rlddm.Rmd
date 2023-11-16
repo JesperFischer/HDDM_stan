@@ -1,0 +1,81 @@
+---
+title: "hier_rlddm"
+output: html_document
+date: "2023-11-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+trials = 300
+subjects = 10
+
+mu_alpha = 5
+sd_alpha = 2
+
+mu_delta = 2
+sd_delta = 3
+
+mu_beta = 0.5
+sd_beta = 1
+
+mu_tau = 0.3
+sd_tau = 0.1
+
+mu_alpha = 0.3
+sd_alpha = 0.1
+
+
+alphas = array(NA,subjects)
+deltas = array(NA,subjects)
+betas = array(NA,subjects)
+taus = array(NA,subjects)
+trials = rep(trials,subjects)
+
+alphas = truncnorm::rtruncnorm(subjects,0,Inf,mu_alpha, sd_alpha)
+deltas = rnorm(subjects,mu_delta, sd_delta)
+betas = brms::inv_logit_scaled(rnorm(subjects,mu_beta, sd_beta))
+taus = truncnorm::rtruncnorm(subjects,0,Inf,mu_tau, sd_tau)
+
+
+
+apply_rwiener <- function(index, n, alpha, delta, beta, tau) {
+  
+  result <- rwiener(n = n,
+                    alpha = alpha,
+                    delta = delta,
+                    beta = beta,
+                    tau = tau)
+  
+  result_df <- data.frame(index = index,
+                          alpha = alpha,
+                          trials = n,
+                          beta = beta,
+                          tau = tau,
+                          delta = delta,
+                          result)
+  return(result_df)
+}
+```
+
+
+```{r}
+# Applying the function to each element of the vectors
+results_list <- mapply(apply_rwiener,
+                       index = 1:length(trials), 
+                       n = trials,
+                       alpha = alphas,
+                       delta = deltas, 
+                       beta = betas,
+                       tau = taus,
+                       SIMPLIFY = FALSE)
+
+#getting the results in a dataframe
+result_df <- do.call(rbind, results_list)
+
+```
+

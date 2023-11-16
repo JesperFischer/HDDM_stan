@@ -51,5 +51,674 @@ fit_pr(data_list[[750]])
 #                        .progress = TRUE,
 #                        .options = furrr_options(seed = TRUE))
 
+
+
 ```
+
+
+# Visuaalization
+
+# Parameter recovery visualization
+```{r}
+# linear model fit
+load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm.RData"))
+i = 0
+plots = list()
+for(id in c(1,3,6,8)){
+  i = i+1
+  print(id)
+  
+  titles = ifelse(id == 1, "data=linear, \nmodel = linear",
+                  ifelse(id == 3, "data=linear, \nmodel = nonlinear",
+                  ifelse(id == 6, "data=nonlinear, \nmodel = linear",
+                  ifelse(id == 8, "data=nonlinear, \nmodel = nonlinear"))))
+  
+  divergence = map_dfr(results_rlddm, id+1)
+  
+  # divergence %>% 
+  #   pivot_longer(cols = c(num_divergent, num_max_treedepth)) %>% 
+  #   ggplot(aes(x = value))+facet_wrap(~name)+geom_histogram()
+  # 
+  #summary(divergence$num_divergent)
+  
+  
+  ids_no_div = unique(divergence %>% filter(num_divergent == 0) %>% .$id)
+  
+  results = map_dfr(results_rlddm, id)
+  
+  plot_list <- list()
+  
+  results = results %>% mutate(across(all_of(contains("real_")), as.factor))
+  
+  
+    for(variables in unique(results$variable)){
+  
+      p = results %>%
+        mutate(across(all_of(contains("real_")), as.factor)) %>% 
+        filter(id %in% ids_no_div, variable == variables) %>%
+        mutate(real = .[[paste0("real_", variables)]]) %>% 
+        mutate(real2 = as.numeric(as.character(real))) %>% 
+        rename(Trial_number = N) %>% 
+        ggplot(aes(x = mean, fill = real))+
+        geom_histogram(col = "black", alpha = 0.5, position="identity")+
+        theme_classic()+
+        geom_vline(aes(xintercept = real2), alpha = 0.5, linetype = 2)+
+        facet_wrap(~Trial_number, labeller = label_both)+
+        theme(legend.position = "top")+
+        ggtitle(paste0(variables))
+      
+      plot_list[[variables]] <- p
+    }
+  
+  combined_plots <- wrap_plots(plot_list)
+  
+  
+  
+  plots[[i]] = combined_plots+plot_annotation(titles)
+
+}
+
+
+```
+
+#linear data
+```{r, fig.height=7.5, fig.width=10}
+plots[[1]]
+plots[[2]]
+```
+
+#non lineardata
+```{r, fig.height=7.5, fig.width=10}
+plots[[3]]
+plots[[4]]
+```
+
+
+
+# difference plot
+```{r}
+include_div = F
+
+# linear model fit
+i = 0
+plots = list()
+
+for(id in c(1,3,6,8)){
+  i = i+1
+  print(id)
+  
+  titles = ifelse(id == 1, "data=linear, \nmodel = linear",
+                  ifelse(id == 3, "data=linear, \nmodel = nonlinear",
+                  ifelse(id == 6, "data=nonlinear, \nmodel = linear",
+                  ifelse(id == 8, "data=nonlinear, \nmodel = nonlinear"))))
+  
+  divergence = map_dfr(results_rlddm, id+1)
+  
+  # divergence %>% 
+  #   pivot_longer(cols = c(num_divergent, num_max_treedepth)) %>% 
+  #   ggplot(aes(x = value))+facet_wrap(~name)+geom_histogram()
+  # 
+  #summary(divergence$num_divergent)
+  
+  
+  ids_no_div = unique(divergence %>% filter(num_divergent == 0) %>% .$id)
+  
+  results = map_dfr(results_rlddm, id)
+  
+  plot_list <- list()
+  
+  results = results %>% mutate(across(all_of(contains("real_")), as.factor))
+  
+  
+    for(variables in unique(results$variable)){
+  
+      p = results %>%
+        mutate(across(all_of(contains("real_")), as.factor)) %>% 
+        filter(id %in% ids_no_div, variable == variables) %>%
+        mutate(real = .[[paste0("real_", variables)]]) %>% 
+        mutate(real2 = as.numeric(as.character(real))) %>% 
+        mutate(dif = mean-real2) %>% 
+        rename(Trial_number = N) %>% 
+        ggplot(aes(x = dif, fill = real))+
+        geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
+        geom_histogram(col = "black", alpha = 0.5, position="identity")+
+        theme_classic()+
+        facet_wrap(~Trial_number, labeller = label_both)+
+        theme(legend.position = "top")+
+        ggtitle(paste0(variables))
+      
+      plot_list[[variables]] <- p
+    }
+  
+  combined_plots <- wrap_plots(plot_list)
+  
+  
+  
+  plots[[i]] = combined_plots+plot_annotation(titles)
+
+}
+
+
+```
+
+# ddm models
+```{r, fig.height=7.5, fig.width=10}
+plots[[1]]
+plots[[2]]
+```
+
+# nonlinear data
+```{r, fig.height=7.5, fig.width=10}
+plots[[3]]
+plots[[4]]
+```
+
+#Scatter plot
+
+```{r}
+titles = ifelse(id == 1, "data=linear, \nmodel = linear",
+                ifelse(id == 3, "data=linear, \nmodel = nonlinear",
+                ifelse(id == 6, "data=nonlinear, \nmodel = linear",
+                ifelse(id == 8, "data=nonlinear, \nmodel = nonlinear"))))
+
+
+results = map_dfr(results_rlddm, 1)
+
+plot_list <- list()
+
+results = results %>% mutate(across(all_of(contains("real_")), as.factor))
+
+
+for(variables in unique(results$variable)){
+
+  p = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+    rename(Trial_number = N) %>% 
+    ggplot(aes(x = mean, y = real2,col = Trial_number))+
+    geom_point(col = "black", alpha = 0.5)+
+    theme_classic()+
+    facet_grid(real_alpha~real_delta, labeller = label_both)+
+    theme(legend.position = "top")+
+    ggtitle(paste0(variables))+
+    geom_point(aes())+geom_abline(slope = 1, intercept = 0)+
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+  plot_list[[variables]] <- p
+}
+
+
+combined_scatter <- wrap_plots(plot_list)
+
+combined_scatter[[1]]
+combined_scatter[[2]]
+combined_scatter[[3]]
+combined_scatter[[4]]
+combined_scatter[[5]]
+```
+
+
+```{r}
+variables = "lr"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_alpha*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_alpha","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,0.70), breaks = seq(0,0.7,by = 0.1))+
+  scale_y_continuous(lim = c(0,0.70), breaks = seq(0,0.7,by = 0.1))
+
+
+variables = "lr"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_delta*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_delta","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,0.70), breaks = seq(0,0.7,by = 0.1))+
+  scale_y_continuous(lim = c(0,0.70), breaks = seq(0,0.7,by = 0.1))
+
+
+variables = "delta"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_lr*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_lr","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))+
+  scale_y_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))
+
+
+
+variables = "delta"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_alpha*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_alpha","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))+
+  scale_y_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))
+
+
+variables = "delta"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_tau*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_tau","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))+
+  scale_y_continuous(lim = c(0,6), breaks = seq(0,6,by = 1))
+
+
+
+
+variables = "beta"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","Trial_number")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,1), breaks = seq(0,1,by = 0.1))+
+  scale_y_continuous(lim = c(0,1), breaks = seq(0,1,by = 0.1))
+
+
+
+variables = "tau"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% lm(mean ~ real2*real_alpha*Trial_number, data = .)
+
+
+plot(ggeffects::ggeffect(m1, terms = c("real2","real_alpha","Trial_number")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()+
+  scale_x_continuous(lim = c(0,0.5), breaks = seq(0,0.5,by = 0.1))+
+  scale_y_continuous(lim = c(0,0.5), breaks = seq(0,0.5,by = 0.1))
+```
+
+
+```{r}
+variables = "lr"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% mutate(Trial_number = as.numeric(Trial_number))
+
+
+model_gam = gamlss::gamlss(mean ~ real2*real_delta*Trial_number,
+                           sigma.formula = ~ real2*real_delta*Trial_number,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2","real_delta","Trial_number")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
+
+
+
+variables = "delta"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% mutate(Trial_number = as.numeric(Trial_number))
+
+
+
+model_gam = gamlss::gamlss(mean ~ real2*real_alpha*Trial_number,
+                           sigma.formula = ~ 1,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2","real_alpha","Trial_number")))+geom_abline(slope = 1, intercept = 0, linewidth = 1)+geom_point()
+
+
+
+
+
+
+##### modeling
+
+variables = "tau"
+m1 = results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(id %in% ids_no_div, variable == variables) %>%
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), N = as.factor(N)) %>% 
+      mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = N) %>% mutate(Trial_number = as.numeric(Trial_number))
+
+model_gam = gamlss::gamlss(mean ~ real2,
+                           sigma.formula = ~ real2+real_alpha+Trial_number,
+                           data = m1)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2","real_alpha","Trial_number")))
+
+summary(model_gam)
+
+
+
+model_gam = gamlss::gamlss(mean ~ real2+real_alpha+Trial_number,
+                           data = m1)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2","real_alpha","Trial_number")))
+
+summary(model_gam)
+
+```
+
+#model comparsion on the linear data
+
+
+
+
+#model comparsion
+
+```{r}
+load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm.RData"))
+
+model_compar = map_dfr(results_rlddm, 5)
+
+model_compar %>% filter(elpd_diff == 0) %>% group_by(model) %>% summarize(n = n())
+
+results = map_dfr(results_rlddm, 1)
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% filter(elpd_diff == 0) %>% group_by(N,model) %>% summarize(n = n())
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar)  %>%
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0, diff_sd > 2) %>%
+  group_by(model, N) %>% summarize(n = n())
+
+
+```
+
+
+#plotting elpd ratio as a function of number of winning models and trial number
+```{r}
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  group_by(model,N) %>% 
+  summarize(winning_n  = n()) %>% 
+  ggplot(aes(x = N, y = winning_n, col = model))+
+  geom_line()+
+  geom_point()+
+  theme_classic()+ggtitle("Across all trials")
+
+
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  mutate(elpd_ratio = cut(diff_sd, breaks = c(-Inf, 1, 2, 3,4,Inf), labels = FALSE, right = FALSE)) %>% 
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  group_by(model,N, elpd_ratio) %>% 
+  summarize(winning_n  = n()) %>% 
+  ggplot(aes(x = N, y = winning_n, col = model))+
+  geom_line()+
+  geom_point()+
+  facet_wrap(~elpd_ratio, labeller = label_both)+
+  theme_classic()+
+  ggtitle("Across different citerions")
+
+```
+
+
+```{r}
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  filter(N == 200, elpd_diff == 0) %>% 
+  ggplot(aes(x = real_delta,y = real_lr, col = model))+
+  geom_jitter()+
+  facet_grid(real_tau~real_alpha, labeller = label_both)+
+  theme_classic()+
+  ggtitle("all models")
+
+
+
+
+NN = 200
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  filter(N == NN, abs(diff_sd) > 2) %>%
+  ggplot(aes(x = real_delta,y = real_lr, col = model))+
+  geom_jitter()+
+  facet_grid(real_tau~real_alpha, labeller = label_both)+
+  theme_classic()+
+  ggtitle("significant models \n(abs(elpd_diff/se_diff)>2)")
+
+
+
+pm = results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  filter(abs(diff_sd) > 2)
+
+
+pm = pm %>% mutate(model2 = ifelse(model == "fit_nonlinear",0,1))
+
+pm
+
+summary(glm(model2 ~ N+real_delta+real_alpha+real_beta+real_tau+real_lr, family = binomial(link = "logit"), data = pm))
+
+
+
+
+pm = results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct()
+
+
+pm = pm %>% mutate(model2 = ifelse(model == "fit_nonlinear",0,1))
+
+pm
+
+summary(glm(model2 ~ N+real_delta+real_alpha+real_beta+real_tau+real_lr, family = binomial(link = "logit"), data = pm))
+
+
+```
+
+
+
+
+
+
+
+#model comparsion on the nonlinear data
+```{r}
+load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm.RData"))
+
+model_compar = map_dfr(results_rlddm, 10)
+
+model_compar %>% filter(elpd_diff == 0) %>% group_by(model) %>% summarize(n = n())
+
+results = map_dfr(results_rlddm, 1)
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% filter(elpd_diff == 0) %>% group_by(N,model) %>% summarize(n = n())
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar)  %>%
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0, diff_sd > 2) %>%
+  group_by(model, N) %>% summarize(n = n())
+
+
+```
+
+
+#plotting elpd ratio as a function of number of winning models and trial number
+```{r}
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  group_by(model,N) %>% 
+  summarize(winning_n  = n()) %>% 
+  ggplot(aes(x = N, y = winning_n, col = model))+
+  geom_line()+
+  geom_point()+
+  theme_classic()+ggtitle("Across all trials")
+
+
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  mutate(elpd_ratio = cut(diff_sd, breaks = c(-Inf, 1, 2, 3,4,Inf), labels = FALSE, right = FALSE)) %>% 
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  group_by(model,N, elpd_ratio) %>% 
+  summarize(winning_n  = n()) %>% 
+  ggplot(aes(x = N, y = winning_n, col = model))+
+  geom_line()+
+  geom_point()+
+  facet_wrap(~elpd_ratio, labeller = label_both)+
+  theme_classic()+
+  ggtitle("Across different citerions")
+
+
+
+```
+
+
+```{r}
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  filter(N == 200, elpd_diff == 0) %>% 
+  ggplot(aes(x = real_delta,y = real_lr, col = model))+
+  geom_jitter()+
+  facet_grid(real_tau~real_alpha, labeller = label_both)+
+  theme_classic()+
+  ggtitle("all models")
+
+
+
+
+NN = 200
+
+
+results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  filter(N == NN, abs(diff_sd) > 2) %>%
+  ggplot(aes(x = real_delta,y = real_lr, col = model))+
+  geom_jitter()+
+  facet_grid(real_tau~real_alpha, labeller = label_both)+
+  theme_classic()+
+  ggtitle("significant models \n(abs(elpd_diff/se_diff)>2)")
+
+
+
+pm = results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct() %>% 
+  filter(abs(diff_sd) > 2)
+
+
+pm = pm %>% mutate(model2 = ifelse(model == "fit_nonlinear",1,0))
+
+pm
+
+summary(glm(model2 ~ N+real_delta+real_alpha+real_beta+real_tau+real_lr, family = binomial(link = "logit"), data = pm))
+
+
+
+
+pm = results %>% 
+  select(id,N,all_of(contains("real_"))) %>% 
+  inner_join(.,model_compar) %>% 
+  mutate(diff_sd = ifelse(is.na(diff_sd), lead(diff_sd), diff_sd)) %>%
+  filter(elpd_diff == 0) %>% distinct()
+
+
+pm = pm %>% mutate(model2 = ifelse(model == "fit_nonlinear",1,0))
+
+pm
+
+summary(glm(model2 ~ N+real_delta+real_alpha+real_lr+real_beta+real_tau, family = binomial(link = "logit"), data = pm))
+
+```
+
 
