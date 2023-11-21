@@ -105,15 +105,15 @@ fit <- mod$sample(
 
 
 
-  replacements <- c("gm[1]" = "mu_delta",
-                  "gm[2]" = "mu_alpha",
-                  "gm[3]" = "mu_beta",
-                  "gm[4]" = "mu_tau",
-                  "tau_u[1]" = "sd_delta",
-                  "tau_u[2]" = "sd_alpha",
-                  "tau_u[3]" = "sd_beta",
-                  "tau_u[4]" = "sd_tau"
-                  )
+replacements <- c("gm[1]" = "mu_delta",
+                "gm[2]" = "mu_alpha",
+                "gm[3]" = "mu_beta",
+                "gm[4]" = "mu_tau",
+                "tau_u[1]" = "sd_delta",
+                "tau_u[2]" = "sd_alpha",
+                "tau_u[3]" = "sd_beta",
+                "tau_u[4]" = "sd_tau"
+                )
 ```
 
 Lets look at the summary of the model
@@ -126,7 +126,7 @@ Note that:
 flextable::flextable(as_draws_df(fit$summary()) %>%   mutate(variable = case_when(
     variable %in% names(replacements) ~ replacements[variable],
     TRUE ~ variable
-  )) %>% mutate_if(is.numeric, round, digits = 2) %>% head(10))
+  )) %>% mutate_if(is.numeric, round, digits = 2) %>% head(9))
 ```
 Prior posterior updates
 
@@ -405,35 +405,26 @@ fit_model = function(parameters){
   
   data = get_simulation(parameters)
   
-  data_stan = list(Nu = nrow(data %>% filter(resp == "upper")),
-                   Nl = nrow(data %>% filter(resp == "lower")),
-                   RTu = data %>% filter(resp == "upper") %>% .$q,
-                   RTl = data %>% filter(resp == "lower") %>% .$q,
-                   minRT = min(data$q),
-                   run_estimation = 1,
-                   RTbound = 0)
-  
-  
-    
   mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hier","Hier_ddm.stan"))
-  
+
   data_stan = list(trials = nrow(result_df),
-                  S = length(unique(result_df$index)),
-                  S_id = result_df$index,
-                  minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
-                  RT = result_df$q,
-                  resp = result_df %>% .$resp
+                S = length(unique(result_df$index)),
+                S_id = result_df$index,
+                minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
+                RT = result_df$q,
+                resp = result_df %>% .$resp
   )
-  
+
   fit <- mod$sample(
-      data = data_stan,
-      chains = 4,
-      parallel_chains = 4,
-      adapt_delta = 0.9,
-      refresh = 500,
-      max_treedepth = 12,
-      init = 0)
-    
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    refresh = 50,
+    max_treedepth = 12,
+    init = 0)
+
+
   global_estimates = c("gm[1]","gm[2]","gm[3]","gm[4]",
                "tau_u[1]","tau_u[2]","tau_u[3]","tau_u[4]")
 

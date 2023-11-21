@@ -12,33 +12,28 @@ functions{
 data {
   
   int<lower=0> trials;
+
   real minRT;                        // minimum RT of the observed data
+  
   vector[trials] RT;
   
-  int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
+  array[trials] int resp;
   
   vector[trials] u;
   
-  array[trials+1] int resp;
+  int<lower = 0, upper = 1> run_estimation;
   
   int<lower = 0, upper = 1> linear; // a switch to evaluate the likelihood
   
 }
 
 parameters {
-  // parameters of the DDM (parameter names in Ratcliffs DDM), from https://github.com/gbiele/stan_wiener_test/blob/master/stan_wiener_test.R
-  // also see: https://groups.google.com/forum///!searchin/stan-users/wiener%7Csort:relevance/stan-users/-6wJfA-t2cQ/Q8HS-DXgBgAJ
-  // alpha (a): Boundary separation or Speed-accuracy trade-off (high alpha means high accuracy). alpha > 0
-  // beta (b): Initial bias Bias for either response (beta > 0.5 means bias towards "upper" response 'A'). 0 < beta < 1
-  // delta (v): Drift rate Quality of the stimulus (delta close to 0 means ambiguous stimulus or weak ability). 0 < delta
-  // tau (ter): Nondecision time + Motor response time + encoding time (high means slow encoding, execution). 0 < ter (in seconds)
-  ///* upper boundary of tau must be smaller than minimum RT
-  //to avoid zero likelihood for fast responses.
-  //tau can for physiological reasone not be faster than 0.1 s.*/
+
+
   real<lower=0> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
-  real<lower=0> delta;  // drift rate
-  real tau_raw;
+  real delta;  // drift rate
+  real tau_raw;  // nondecision time
   real <lower =0, upper = 1> lr;
 
 
@@ -49,8 +44,11 @@ transformed parameters{
   vector[trials+1] expect;
   vector[trials] deltat;
     
+    
+      
+  real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
+
   
-  real tau = inv_logit(tau_raw) * minRT;
   
   expect[1] = 0.5;
   if(!linear){
