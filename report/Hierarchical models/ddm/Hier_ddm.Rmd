@@ -9,8 +9,7 @@ date: "2023-10-22"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges)
-library(ggridges)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr)
 
 
 ```
@@ -19,14 +18,14 @@ library(ggridges)
 
 Lets try and fit this in Stan Hierarchically!
 ```{r}
-trials = 300
+trials = 100
 subjects = 10
 
-mu_alpha = 5
-sd_alpha = 2
+mu_alpha = 2
+sd_alpha = 0.5
 
 mu_delta = 2
-sd_delta = 3
+sd_delta = 1
 
 mu_beta = 0.5
 sd_beta = 1
@@ -84,7 +83,7 @@ result_df <- do.call(rbind, results_list)
 
 
 
-mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hier","Hier_ddm.stan"))
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hierarchical Models","Hier_ddm.stan"))
 
 data_stan = list(trials = nrow(result_df),
                 S = length(unique(result_df$index)),
