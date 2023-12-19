@@ -628,7 +628,8 @@ fit <- mod$sample(
                                                       real_mu_delta = parameters$mu_delta,
                                                       real_sd_delta = parameters$sd_delta,
                                                       real_mu_lr = parameters$mu_lr,
-                                                      real_sd_lr = parameters$sd_lr
+                                                      real_sd_lr = parameters$sd_lr,
+                                                      id = id
                                                       )
     
   
@@ -654,9 +655,9 @@ fit <- mod$sample(
 }
 
 
-trials = seq(50,150,by = 50)
+trials = seq(50,100,by = 50)
 #trials = 100
-subjects = seq(10,20,by = 10)
+subjects = seq(5,10,by = 5)
 #subject = 10
 
 mu_alpha = seq(1,3,by = 1)
