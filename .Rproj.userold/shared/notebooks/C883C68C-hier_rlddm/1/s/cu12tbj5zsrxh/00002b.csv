@@ -1,0 +1,10 @@
+"0","inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c(""id""))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl(""delta"",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = subj_mean, y = real_subj_values, col = real_mu_alpha))+
+    geom_point(alpha = 0.08)+
+    facet_grid(trials~subjects, scales = ""free"")
+"
+"2","Warning: Detected an unexpected many-to-many relationship between `x` and `y`."

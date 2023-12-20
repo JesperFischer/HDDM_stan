@@ -1,0 +1,548 @@
+---
+title: "Fitting ddm"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-10-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss)
+
+```
+
+# Simulating and fitting data with the DDM
+
+```{r Simulate DDM data}
+set.seed(123)
+trials = 500
+alpha = 2
+delta = 0
+beta = 0.5
+tau = 0.1
+#for later!
+reals = data.frame(variable = c("alpha","beta","delta","tau"),reals = c(alpha,beta,delta,tau))
+
+
+parameters = data.frame(alpha,delta,beta,tau, trials)
+
+data = rwiener(n = trials,
+        alpha = alpha,
+        delta = delta,
+        beta = beta,
+        tau = tau)
+```
+
+# Visualing the simulations
+```{r}
+data %>% ggplot(aes(x = q, fill = resp), col = "black")+
+  geom_histogram(position = "identity",alpha = 0.5)+
+  theme_classic()+
+  xlab("RTs")
+```
+
+
+# Fitting the model in Stan
+```{r Inverting the model}
+
+data_stan = list(trials = nrow(data),
+                 RT = data$q,
+                 resp = ifelse(data$resp == "lower",0,1),
+                 minRT = min(data$q))
+
+
+mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DDM.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    seed = 123,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+
+variables = c("alpha","tau","beta","delta")
+```
+
+## Lets look at the summary of the model
+```{r}
+flextable::flextable(fit$summary(variables) %>%
+                       mutate_if(is.numeric, round, digits = 2) %>%
+                       inner_join(.,reals) %>%
+                       head(4))
+```
+## Prior posterior updates
+
+```{r}
+posteriors = as_draws_df(fit) %>% dplyr::select(any_of(names(parameters))) %>% mutate(prior = F)
+priors = as_draws_df(fit) %>% dplyr::select(starts_with("prior_")) %>% rename_with(~gsub("^prior_", "", .), everything()) %>% mutate(prior = T)
+
+rbind(posteriors,priors) %>% 
+  pivot_longer(cols = -prior) %>% 
+  ggplot(aes(x = value, fill = prior))+
+  geom_density(alpha = 0.5)+
+  theme_classic()+
+  facet_wrap(~name, scales = "free")+
+  geom_vline(data = parameters %>% dplyr::select(-trials) %>% pivot_longer(everything()), aes(xintercept = value))
+
+```
+
+
+
+Posterior predictive checks
+
+```{r}
+library(posterior)
+
+n_check = 50
+
+get_pp = function(input){
+  variables = c("alpha","tau","beta","delta")
+
+  draww = input$draww
+  
+  parameters = as_draws_df(fit$draws(variables)) %>% 
+    dplyr::select(all_of(variables)) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww)
+  
+  parameters$times = input$times
+  
+  df = parameters %>% 
+    rowwise() %>% 
+    mutate(predictedRT = list(RWiener::rwiener(times,alpha,tau,beta,delta)[[1]]),
+           predictedresp = list(RWiener::rwiener(times,alpha,tau,beta,delta)[[2]]),
+           draw = draww)
+  
+  returndf = data.frame(predictedRT = unlist(df$predictedRT), predictedresp = unlist(df$predictedresp), draw = draww)
+  
+  return(list(returndf))
+}
+
+draww = rbinom(n_check,4000,extraDistr::rprop(n_check,1,0.5))
+
+
+parameters = expand.grid(draww = draww,
+                         times = 100) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+possfit_model = possibly(.f = get_pp, otherwise = "Error")
+
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+error_indices <- which(results == "Error")
+ 
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+
+rts = map_dfr(results2,1)
+
+rts %>% ggplot()+
+  geom_density(aes(x = predictedRT, group = draw), col = "lightblue")+
+  geom_density(data = data, aes(x = q), col = "red")+
+  theme_classic()
+```
+
+
+# Lets do parameter recovery on this model!
+
+First we make a function that does the following:
+- First we simulate data given some parameter values:
+- Then we fit the model using stan to get estimated parameter values
+- Then we extract these estimated and simulated values aswell as diagnostics for the models fit.
+
+```{r}
+fit_model = function(parameters){
+  
+  # Simulate
+  id = parameters$id
+  
+  data = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(trials = nrow(data),
+                 RT = data$q,
+                 resp = ifelse(data$resp == "lower",0,1),
+                 minRT = min(data$q))
+
+  # Fit model
+  mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DDM.stan"))
+
+  
+  fit <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      refresh = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  #Extract parameters and diagnosics
+  
+  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  diag = data.frame(fit$diagnostic_summary(), id)
+  
+  data = posteriors %>% mutate(num_div = diag$num_divergent,
+                               tree_depth = diag$num_max_treedepth,
+                               real_alpha = parameters$alpha,
+                               real_delta = parameters$delta,
+                               real_beta = parameters$beta,
+                               real_tau = parameters$tau,
+                               trials = parameters$trials,
+                               id = id) %>% select(-contains("."))
+  return(list(data, diag))
+}
+```
+
+
+Defining ranges for our parameter estimates
+
+```{r}
+trials = seq(50,200,by = 50)
+alpha = seq(1,4,by = 1)
+delta = seq(-3,3,by = 1)
+beta = seq(0.2,0.8,by = 0.1)
+tau = seq(0.1,0.3,by = 0.1)
+
+replicate = 1:1
+
+parameters = expand.grid(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
+```
+
+
+Parallelizing the procedure to speed up the process!
+
+```{r}
+#cores = availableCores()-1
+# 
+# plan(multisession, workers = 4)
+#  
+# possfit_model = possibly(.f = fit_model, otherwise = "Error")
+# 
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
+```
+
+# Parameter recover results!
+
+We start with the models that caused errors if any.
+```{r}
+error_indices <- which(results == "Error")
+ 
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+```
+None! As expected but good to see
+
+
+Lets look at the divergences and max treedpeth of the models fit.
+```{r}
+divergence = map_dfr(results2, 2)
+
+divergence %>% median_qi(num_divergent)
+```
+There are also none which is good!
+
+# Visualizing Parameter recovery!
+
+## single variable plots vs trials!
+
+Now we can look at the parameter values! Estimated vs simulated
+
+```{r, fig.height=10, fig.width=10}
+params = map_dfr(results2, 1)
+
+variables = c("alpha","delta","tau","beta")
+
+get_parameter_plots = function(variables, histogram){
+
+  plot_list = list()
+  for(variable1 in variables){
+    plot = params %>% filter(variable == variable1) %>% 
+      mutate(real = get(paste0("real_",variable1))) %>% 
+      ggplot(aes(x = mean, fill = as.factor(real)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      geom_vline(aes(xintercept = real))+
+      facet_wrap(~trials, labeller = label_both)+
+      {if(variable1 == "tau")coord_cartesian(xlim = c(0,.5))}+
+      ggtitle(variable1)+
+      theme(legend.position = "top")
+    
+    plot_list[[variable1]] = plot
+  }
+  return(plot_list)
+}
+
+plots = get_parameter_plots(variables = variables,histogram = FALSE)
+
+(plots[["alpha"]]+plots[["delta"]])/(plots[["tau"]]+plots[["beta"]])
+
+
+plots_hist = get_parameter_plots(variables = variables,histogram = TRUE)
+
+(plots_hist[["alpha"]]+plots_hist[["delta"]])/(plots_hist[["tau"]]+plots_hist[["beta"]])
+
+```
+
+## Scatter plots of interactions between variables
+
+```{r, fig.height=10, fig.width=10}
+
+params %>% 
+  mutate_if(is.numeric, round, digits = 2) %>% 
+  filter(variable == "delta") %>% 
+        ggplot(aes(x = mean, y = real_delta, col = trials))+
+        facet_grid(real_beta~real_alpha, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point(aes())+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(-6, 6), xlim = c(-6,6))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+params %>%
+  mutate_if(is.numeric, round, digits = 2) %>% 
+  filter(variable == "alpha") %>% 
+        ggplot(aes(x = mean, y = real_alpha, col = trials))+
+        facet_grid(real_beta~real_delta, labeller = label_both, scales = "free")+
+        theme_classic()+
+  geom_point(aes())+geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(ylim = c(-1, 5), xlim = c(-1,5))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## We can do better lets model this to see the interactions!!
+
+Lets start with the most obvious case of the drift rate! 
+Here we need to realize that both signs basically mean the same and from the plots above we see that they are identical we can therefore take the absolute value of real and estimated values!
+
+```{r}
+variables = "delta"
+
+
+m1 = params %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), trials = as.factor(trials)) %>% 
+    mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = trials) %>% 
+    mutate(Trial_number = as.numeric(Trial_number)) %>% 
+    mutate(real2 = abs(real2), mean = abs(mean)) %>% 
+  filter(variable == variables)
+
+
+model_gam = gamlss::gamlss(mean ~ real+Trial_number,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real")))+
+  geom_point()
+```
+
+But this model doesn't really makes sense! It makes sense that the different simulated real values thightly correlate with the estimated values, but what do we make of the effect of Trial number?
+
+
+The effect of Trial number basically here states that as we simulate with more trials the estimated mean gets shrunk a bit. Which makes sense given the estimated means (espically in higher simulated (real) values)
+
+The right way to approach this, is to not model the mean of the normal distribution as trials increase but the standard deivation as trials increase:
+
+```{r}
+model_gam = gamlss::gamlss(mean ~ real,
+                           sigma.formula = ~Trial_number,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real")))+
+  geom_point()
+```
+
+What we see here is that generally as we increase trials by 1 we decrease the standard deviation by $exp(-0.198)$ which translates into `r round(1-exp(-0.198),3)` % decrease in the standard deviation.
+
+Now for the threshold parameter which was the trickiest to recover and depended heavily on the simulated value of both drift rate and starting bias!
+
+```{r, fig.height=10, fig.width=10}
+variables = "alpha"
+
+
+m1 = params %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), trials = as.factor(trials)) %>% 
+    mutate(across(all_of(contains("real_")), as.character)) %>% 
+    mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = trials) %>% 
+    mutate(Trial_number = as.numeric(Trial_number)) %>% 
+  filter(variable == variables)
+
+
+model_gam = gamlss::gamlss(mean ~ real* real_beta * real_delta,
+                           sigma.formula = ~Trial_number,
+                           data = m1)
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real","real_beta","real_delta [-5:5]")))+
+  geom_point()
+```
+
+
+
+
+
+# Other modelings opportunities!
+
+The next thing one might think about is that when participants go through all these tasks they will inevitably become tried and lose focus / attention. We can think of a couple of ways to incorporate this into the modeling.
+
+1) participants decision boundary decreases as trials increase.
+2) participants' absolute drift rates decreases as trials increase.
+3) participants' non-decision time increases as trials increases.
+
+We would also expect that these effects would be somewhat mitigated by breaks (i.e a sudden shift in these parameters).
+
+Lets just start with a linear decrease increase in these as trials increase.
+
+
+```{r}
+parameters = data.frame(trials = 100,
+                        alpha_0 = 2,
+                        alpha_b1 = -0.01,
+                        delta_0 = 0,
+                        delta_b1 = 0,
+                        beta = 0.5,
+                        tau_0 = 0.2,
+                        tau_b1 = 0.01)
+
+fit_gdmm = function(parameters){
+ 
+  trials = parameters$trials
+  alpha_0 = parameters$alpha_0
+  alpha_b1 = parameters$alpha_b1
+  
+  delta_0 = parameters$delta_0
+  delta_b1 = parameters$delta_b1
+  
+  beta = parameters$beta
+  tau_0 = parameters$tau_0
+  tau_b1 = parameters$tau_b1
+  
+  
+  alpha = array(NA,trials)
+  delta = array(NA,trials)
+  tau = array(NA,trials)
+
+  resp = data.frame()
+  for(i in 1:trials){
+    alpha[i] = alpha_0 + alpha_b1 * i
+    delta[i] = delta_0 + delta_b1 * i
+    tau[i] = tau_0 + tau_b1 * i
+    
+    data = rwiener(n = 1,
+                   beta = beta,
+                   alpha = alpha[i],
+                   tau = tau[i],
+                   delta = delta[i])
+      
+    resp = rbind(resp,data)
+  }  
+  resp$trials = 1:trials
+  
+  resp$alpha_0 = alpha_0
+  resp$alpha_b1 = alpha_b1
+  resp$delta_0 = delta_0
+  resp$delta_b1 = delta_b1
+  resp$tau_0 = tau_0
+  resp$tau_b1 = tau_b1
+  resp$beta = beta
+  resp$id = parameters$id
+  
+  
+  return(list(resp))
+}
+
+
+fit_gdmm(parameters)[[1]] %>% 
+  ggplot(aes(x = trials, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+```
+
+Now lets see this plot with different levels:
+```{r}
+trials = 100
+alpha_0 = 1
+alpha_b1 = seq(-0.009, 0,length.out = 5)
+
+delta_0 = 0
+delta_b1 = 0
+
+beta = 0.5
+tau_0 = 0.3
+tau_b1 = seq(0, 0.001, length.out = 5)
+
+
+parameters = expand.grid(alpha_0 = alpha_0,
+                         alpha_b1 = alpha_b1,
+                         delta_0 = delta_0,
+                         delta_b1 = delta_b1,
+                         beta = beta,
+                         tau_0 = tau_0,
+                         tau_b1 = tau_b1,
+                         trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+#cores = availableCores()-120
+
+plan(multisession, workers = 4)
+
+possfit_model = possibly(.f = fit_gdmm, otherwise = "Error")
+
+#results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+#error_indices <- which(results == "Error")
+
+#unique(error_indices)
+
+#results2 = results[results != "Error"]
+
+```
+
+
+
+```{r, fig.height=10, fig.width=10}
+# dd = map_dfr(results2,1)
+# 
+# dd %>% ggplot(aes(x = trials, y = q)) + 
+#   geom_point()+
+#   theme_classic()+
+#   facet_grid(tau_b1~alpha_b1, labeller = label_both, scales = "free")+
+#   geom_smooth(method = "lm")
+```
+

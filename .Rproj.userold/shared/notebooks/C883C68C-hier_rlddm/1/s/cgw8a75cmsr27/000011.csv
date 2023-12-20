@@ -1,0 +1,5 @@
+"0",""
+"0","subj %>% mutate(dif = mean-real_values) %>% "
+"0","  ggplot(aes(x = mean, y = real_values))+geom_point()+"
+"0","  facet_grid(trials~reals, scales = ""free"")+"
+"0","  geom_abline(slope = 1, intercept = 0, col = ""red"")"

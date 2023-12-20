@@ -1,0 +1,630 @@
+---
+title: "RLDMM"
+output:
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float: true
+  pdf_document: default
+  word_document: default
+urlcolor: blue
+date: "2023-07-21"
+---
+
+<style type="text/css">
+  body{
+  font-size: 14pt;
+}
+</style>
+
+
+```{r setup, include=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, bayesplot, loo, patchwork)
+
+```
+
+## RLDMM
+
+Looking at incorporating reinforcement learning! The basic idea being that the learning about the contingency space (U) influences the drift rate of the weiner distribution. So in an experimental setting this would amount to the participant having heard a cue and then having to predict the next stimulus. If the participant is very certain that the cue is associated with a particular stimulus then he/she will respond faster (higher absolute drift rate) compared to if very uncertain. The sign is also important so the drift rate is said to follow the following:
+$$
+\delta_i = (E_i-(1-E_i))*\delta_s
+$$
+
+where $\delta_i$ is the drift rate on the given trial and $\delta_s$ is the subject specific parameter that determines how much the expectation influences the reaction times (drift rates). An example could be that the expectation is 0.2 we get $0.2-(1-0.2) = 0.2-0.8 = -0.6$ or when the expectation is 0.8 we get $0.8-(1-0.8) = 0.8-0.2 = 0.6$ The sign therefore makes sense: Lets simulate and see how it looks:
+
+
+# linear ddm
+```{r}
+
+N = 400
+
+u = c()
+for(i in 1:(N/100)){
+  u1 = c(rbinom(25,1,0.8),rbinom(25,1,0.2),rbinom(25,1,0.8),rbinom(25,1,0.5))
+  u = c(u,u1)
+}
+
+alpha = 2
+beta = 0.5
+tau = 0.1
+lr = 0.2
+e0 = 0.5
+expectation = array(NA, N+1)
+uncertainty = array(NA, N)
+respx = array(NA, N+1)
+expectation[1] = e0
+
+linear = T
+delta = 3
+
+
+resp = data.frame()
+for(i in 1:N){
+  if(!linear){
+    if(expectation[i] > 0.5){
+      uncertainty[i] = (-delta*(expectation[i]*(1-expectation[i])))+0.25*delta
+    }else if(expectation[i] < 0.5){
+      uncertainty[i] = -((-delta*(expectation[i]*(1-expectation[i])))+0.25*delta)
+    }else{
+      uncertainty[i] = 0 
+    }
+  }
+  if(linear){
+    uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+  }
+  
+  resp1 = rwiener(n = 1,
+        alpha = alpha,
+        delta = uncertainty[i],
+        beta = beta,
+        tau = tau)
+  
+  expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+  respx[i] = rbinom(1,1,expectation[i])
+  
+  resp = rbind(resp,resp1)
+}
+
+resp$u = u
+resp$expectation = expectation[1:N]
+resp$uncertainty = uncertainty[1:N]
+
+resp$trial = 1:N
+
+resp$respx = respx[1:N]
+
+resp$lr = lr
+resp$alpha = alpha
+resp$beta = beta
+resp$tau = tau
+resp$delta = delta
+
+```
+
+Lets now plot what this entails. The interesting part is how the behavior changes to see that the model makes sense! Here we then plot the expectation as a function of reaction times. However first we can plot how the expectation changes along with trials and inputs (U). Here the unputs are the red dots and the responses are the red dots and the black line is the the expectation.
+
+```{r}
+resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
+  geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
+  geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
+  theme_classic()+
+  geom_line(aes(x=1:N, y = expectation))
+```
+
+This looks nice the agent learns the contingency now for the expectation vs reaction time
+
+```{r}
+resp %>% ggplot(aes(x = expectation, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+resp %>% ggplot(aes(x = uncertainty, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+resp %>% ggplot(aes(x = uncertainty, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+resp %>% ggplot(aes(x = (expectation*(1-expectation))*delta, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+```
+
+Given that the forward simulations look how we expect the question is if the model is inverseable! Lets use STAN again
+
+```{r}
+resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+
+
+data_stan = list(RT = resp %>% .$q,
+                 minRT = min(resp$q),
+                 run_estimation = 1,
+                 trials = nrow(resp),
+                 u = resp$u,
+                 linear = linear,
+                 resp = c(resp$resp2,0))
+
+
+
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+    )
+
+variables = c("delta","lr","alpha","beta","tau")
+mcmc_pairs(fit1$draws(variables = variables), np = nuts_params(fit1), pars = variables,
+                           off_diag_args = list(size = 0.75))
+
+mcmc_trace(fit1$draws(variables = variables))
+# fit1$save_object(here::here("models","RLDDM_model.RDS"))
+
+#fit1 <- readRDS(here::here("models","RLDDM_model.RDS"))
+
+
+as_draws_df(fit1$draws(variables = c("delta","lr","alpha"))) %>% 
+  ggplot(aes(x = delta, y = lr))+
+  geom_point()
+
+```
+
+Looks good
+
+Lets look at the summary
+```{r}
+flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round,2) %>% head(10))
+```
+```{r}
+variables = c("delta","lr","alpha","beta","tau")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = variables,
+                               value = as.vector(unlist(resp %>% select(variables) %>% 
+                                                          slice(1)))),
+             aes(xintercept = value), linetype = 2)
+
+
+
+```
+
+
+
+Predictive checks?
+
+```{r}
+draww = rbinom(1,4000,extraDistr::rprop(1,1,0.5))
+
+deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+  pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+  mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+
+
+
+parameters = as_draws_df(fit1$draws()) %>% select(matches(c("alpha","tau","beta"))) %>% mutate(tau_raw = NULL) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww)
+
+
+df = inner_join(deltas, parameters)
+
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+
+resp %>% ggplot(aes(x = uncertainty, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT, col = predictedresp))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+```
+
+```{r}
+library(posterior)
+
+n_check = 25
+
+get_pp = function(draww){
+  draww = draww$draww
+  deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+    pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+    mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+  
+  
+  
+  parameters = as_draws_df(fit1$draws()) %>% select(matches(c("alpha","tau","beta"))) %>% mutate(tau_raw = NULL) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww)
+  
+  
+  df = inner_join(deltas, parameters) %>% 
+    rowwise() %>% 
+    mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],
+           predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]],
+           draw = draww)
+  return(list(df))
+}
+
+draww = rbinom(n_check,4000,extraDistr::rprop(n_check,1,0.5))
+
+
+parameters = expand.grid(draww = draww) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+results <- future_map(data_list, ~get_pp(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+rts = map_dfr(results,1)
+
+rts %>% ggplot()+geom_density(aes(x = predictedRT, group = draw), col = "lightblue")+geom_density(data = resp, aes(x = q), col = "red")+theme_classic()
+```
+
+## Standard RL
+Now lets see what a model that instead of using the drift diffusion model just models the learning based on what is normally done i.e. A Rescorla Wagner learning model with a inverse decision temperature:
+
+```{r}
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RL_normal.stan"))
+
+
+data_stan = list(N = nrow(resp),
+                 u = resp$u,
+                 linear = linear,
+                 resp = resp$resp2)
+
+
+
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+    )
+
+variables = c("lr","zeta")
+mcmc_pairs(fit1$draws(variables = variables), np = nuts_params(fit1), pars = variables,
+                           off_diag_args = list(size = 0.75))
+
+mcmc_trace(fit1$draws(variables = variables))
+```
+
+```{r}
+flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round,2) %>% head(5))
+```
+
+```{r}
+
+
+variables = c("lr","zeta")
+posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free")+
+  theme_classic()+
+  geom_vline(data = data.frame(name = c("lr","zeta"), value = c(lr,NA)), aes(xintercept = value), linetype = 2)
+
+```
+Interrestingly the 
+
+
+
+
+
+
+## Non linear driftrate (bernoulli variance)
+
+Instead of having this linear relationship between the drift rate and the difference in the expected value we can make use of the fact that the expectation can be thought of as being the probability parameter of a Bernoulli distribution which would then have a variance given by:
+
+$$
+Var_i = E_i*(1-E_i)
+$$
+
+This function is a parabola with a peak at 0.5 and with downwards turning ends. To convert this into a suitable driftrate for the DDM we have to make two adjustments. First the variance peaks at 0.5 (i.e. highest uncertainty with an expectation of 0.5) we would like the driftrate to have a minimum at this value and that minimum should be 0. Next the parabola has the wrong shape in that it increases up untill the peak and then decreases, for the drift rates we need something that has a minimum and not a maximum which can be accieved by reversing the sign of the term with $E_i^{2}$. This can all be acheived by the following rewriting:
+$$
+\delta_i = -\delta_s*(E_i*(1-E_i)+0.25*\delta_s
+$$
+Here the subject specific drift rate $\delta_s$ governs the steepness of the parabola essentially describing how the much the drift-rate changes as the expectation changes. The second added term $0.25*\delta_s$ insures that the function will have a minimum at 0.5 ensuring that unknowing participants will be slow and equally likely to choose both options. The last thing that needs to be added is that when the expectation at trial t is below 0.5 the driftrate has to be negative instead of positive, which will ensure that participants that think the next trial is most likely 0 will also be most likely to respond 0.
+
+Lets simulate and see how it looks:
+
+# non linear ddm
+```{r}
+
+mod <- cmdstan_model(here::here("stan_scripts","RLHDMM_rng.stan"))
+N = 400
+
+u = c()
+for(i in 1:(N/100)){
+  u1 = c(rbinom(25,1,0.8),rbinom(25,1,0.2),rbinom(25,1,0.8),rbinom(25,1,0.5))
+  u = c(u,u1)
+}
+
+alpha = 2
+beta = 0.5
+tau = 0.1
+lr = 0.2
+e0 = 0.5
+expectation = array(NA, N+1)
+uncertainty = array(NA, N)
+respx = array(NA, N+1)
+expectation[1] = e0
+
+linear = F
+delta = 10
+
+
+resp = data.frame()
+for(i in 1:N){
+  if(!linear){
+    if(expectation[i] > 0.5){
+      uncertainty[i] = (-delta*(expectation[i]*(1-expectation[i])))+0.25*delta
+    }else if(expectation[i] < 0.5){
+      uncertainty[i] = -((-delta*(expectation[i]*(1-expectation[i])))+0.25*delta)
+    }else{
+      uncertainty[i] = 0 
+    }
+  }
+  if(linear){
+    uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+  }
+  
+  resp1 = rwiener(n = 1,
+        alpha = alpha,
+        delta = uncertainty[i],
+        beta = beta,
+        tau = tau)
+  
+  expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+  respx[i] = rbinom(1,1,expectation[i])
+  
+  resp = rbind(resp,resp1)
+}
+
+resp$u = u
+resp$expectation = expectation[1:N]
+resp$uncertainty = uncertainty[1:N]
+
+resp$trial = 1:N
+
+resp$respx = respx[1:N]
+```
+
+Lets now plot what this entails. The interesting part is how the behavior changes to see that the model makes sense! Here we then plot the expectation as a function of reaction times. However first we can plot how the expectation changes along with trials and inputs (U). Here the unputs are the red dots and the responses are the red dots and the black line is the the expectation.
+
+```{r}
+resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
+  geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
+  geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
+  theme_classic()+
+  geom_line(aes(x=1:N, y = expectation))
+```
+
+This looks nice the agent learns the contingency now for the expectation vs reaction time
+
+```{r}
+resp %>% ggplot(aes(x = expectation, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+resp %>% ggplot(aes(x = uncertainty, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+resp %>% ggplot(aes(x = uncertainty, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+resp %>% ggplot(aes(x = (expectation*(1-expectation))*delta, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+```
+
+Given that the forward simulations look how we expect the question is if the model is inverseable! Lets use STAN again
+
+```{r}
+resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+
+
+data_stan = list(RT = resp %>% .$q,
+                 minRT = min(resp$q),
+                 run_estimation = 1,
+                 trials = nrow(resp),
+                 u = resp$u,
+                 linear = linear,
+                 resp = c(resp$resp2,0))
+
+
+
+fit1 <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    iter_warmup = 1000,
+    iter_sampling = 1000,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+    )
+
+variables = c("delta","lr","alpha","beta","tau")
+
+mcmc_pairs(fit1$draws(variables = variables), np = nuts_params(fit1), pars = variables,
+                           off_diag_args = list(size = 0.75))
+
+mcmc_trace(fit1$draws(variables = variables))
+# fit1$save_object(here::here("models","RLDDM_model.RDS"))
+
+#fit1 <- readRDS(here::here("models","RLDDM_model.RDS"))
+
+
+as_draws_df(fit1$draws(variables = c("delta","lr","alpha"))) %>% ggplot(aes(x = delta, y = lr))+geom_point()
+
+```
+
+Looks good
+
+Lets look at the summary
+```{r}
+flextable::flextable(data.frame(fit1$summary()) %>% mutate_if(is.numeric, round,2) %>% head(10))
+```
+
+Predictive checks?
+
+```{r}
+draww = rbinom(1,4000,extraDistr::rprop(1,1,0.5))
+
+deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+  pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+  mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+
+
+
+parameters = as_draws_df(fit1$draws()) %>% select(matches(c("alpha","tau","beta"))) %>% mutate(tau_raw = NULL) %>% 
+  mutate(draw = 1:nrow(.)) %>% slice(draww)
+
+
+df = inner_join(deltas, parameters)
+
+resp %>% ggplot(aes(x = expectation, y = q))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+
+
+resp %>% ggplot(aes(x = uncertainty, y = q, col = resp))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]]) %>% 
+  ggplot(aes(deltat,predictedRT, col = predictedresp))+geom_point()+
+  theme_classic()+
+  geom_smooth()
+```
+
+```{r}
+library(posterior)
+
+n_check = 25
+
+get_pp = function(draww){
+  draww = draww$draww
+  deltas = as_draws_df(fit1$draws()) %>% select(matches("deltat\\[\\d+\\]")) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+    pivot_longer(-draw, values_to = "deltat",names_to = "trial")%>%
+    mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+  
+  
+  
+  parameters = as_draws_df(fit1$draws()) %>% select(matches(c("alpha","tau","beta"))) %>% mutate(tau_raw = NULL) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww)
+  
+  
+  df = inner_join(deltas, parameters) %>% 
+    rowwise() %>% 
+    mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],
+           predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]],
+           draw = draww)
+  return(list(df))
+}
+
+draww = rbinom(n_check,4000,extraDistr::rprop(n_check,1,0.5))
+
+
+parameters = expand.grid(draww = draww) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+results <- future_map(data_list, ~get_pp(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+rts = map_dfr(results,1)
+
+rts %>% ggplot()+geom_density(aes(x = predictedRT, group = draw), col = "lightblue")+geom_density(data = resp, aes(x = q), col = "red")+theme_classic()
+```
+
+

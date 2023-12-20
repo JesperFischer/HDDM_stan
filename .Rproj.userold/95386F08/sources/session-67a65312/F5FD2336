@@ -1,0 +1,28 @@
+{
+    "id": "F5FD2336",
+    "path": "~/HDDM_stan/report/RLDDM/parameter recovery/parameter_recovery_vs_rw.Rmd",
+    "project_path": "report/RLDDM/parameter recovery/parameter_recovery_vs_rw.Rmd",
+    "type": "r_markdown",
+    "hash": "1407323034",
+    "contents": "",
+    "dirty": true,
+    "created": 1703016755702.0,
+    "source_on_save": false,
+    "relative_order": 8,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "56,0",
+        "scrollLine": "37",
+        "last_setup_crc32": "67a653128b81546e"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1703025082,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1703025157400,
+    "read_only": false,
+    "read_only_alternatives": []
+}

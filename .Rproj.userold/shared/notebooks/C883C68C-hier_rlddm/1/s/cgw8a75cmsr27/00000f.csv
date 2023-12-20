@@ -1,0 +1,6 @@
+"0","#subj = map_dfr(results2, 2)"
+"0",""
+"0","subj %>% mutate(dif = mean-real_values) %>% "
+"0","  ggplot(aes(x = dif))+"
+"0","  geom_histogram(col = ""black"")+"
+"0","  facet_grid(trials~reals, scales = ""free"")"

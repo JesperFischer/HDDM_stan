@@ -45,7 +45,66 @@ sim_ddm = function(parameters){
                     tau = tau)
     
     expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
-    respx[i] = rbinom(1,1,expectation[i])
+
+    resp = rbind(resp,resp1)
+  }
+  
+  resp$u = u
+  resp$expectation = expectation[1:N]
+  resp$uncertainty = uncertainty[1:N]
+  
+  resp$trial = 1:N
+  
+
+  resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
+  
+  resp$real_alpha = parameters$alpha
+  resp$real_beta = parameters$beta
+  resp$real_delta = parameters$delta
+  resp$real_tau = parameters$tau_raw
+  resp$real_lr = parameters$lr
+  
+  library(patchwork)
+  plot = resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
+    geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
+    geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
+    theme_classic()+
+    geom_line(aes(x=1:N, y = expectation))
+  
+  plot1 = resp %>% ggplot(aes(x = expectation, y = q))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()
+  
+  
+  plot = plot/plot1
+  return(list(resp, plot))  
+  
+}
+
+
+sim_rw = function(parameters){
+  N = parameters$N
+  
+  u = c()
+  for(i in 1:(N/50)){
+    u1 = c(rbinom(20,1,0.8),rbinom(20,1,0.2),rbinom(10,1,0.5))
+    u = c(u,u1)
+  }
+  
+  lr = parameters$lr
+  e0 = 0.5
+  expectation = array(NA, N+1)
+  expectation[1] = e0
+  
+  
+  
+  resp = data.frame()
+  for(i in 1:N){
+  
+    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+    
+    
     
     resp = rbind(resp,resp1)
   }
@@ -56,8 +115,7 @@ sim_ddm = function(parameters){
   
   resp$trial = 1:N
   
-  resp$respx = respx[1:N]
-
+  
   resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
   
   resp$real_alpha = parameters$alpha
@@ -66,7 +124,7 @@ sim_ddm = function(parameters){
   resp$real_tau = parameters$tau_raw
   resp$real_lr = parameters$lr
   
-  
+  library(patchwork)
   plot = resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
     geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
     geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
@@ -296,3 +354,102 @@ fit_pr = function(parameters){
 }
 
 
+
+fit_pr_to_simple_rw = function(parameters){
+  
+  source(here::here("report","RLDDM","parameter recovery","simulations.R"))
+  
+  parameter = data.frame(N = parameters$N,
+                         lr = parameters$lr,
+                         alpha = parameters$alpha,
+                         delta = parameters$delta,
+                         beta = parameters$beta,
+                         tau_raw = parameters$tau_raw,
+                         linear = T)
+  
+  resp = sim_ddm(parameter)[[1]]
+  
+  #fitting models 
+  
+  ## linear DDM 
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+  
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = T,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_linear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_linear_linear = fit_linear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_linear_linear = data.frame(fit_linear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2.stan"))
+  
+  
+  data_stan = list(trials = nrow(resp),
+                   u = resp$u,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_rl <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+
+  variables = c("lr")
+  
+  sum_rw = fit_rl$summary(variables = variables) %>% 
+    mutate(real_zeta = NA,
+           real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  
+  diag_rw = data.frame(fit_rl$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  return(list(sum_linear_linear,
+              diag_linear_linear,
+              sum_rw,
+              diag_rw
+  ))
+  
+  
+}

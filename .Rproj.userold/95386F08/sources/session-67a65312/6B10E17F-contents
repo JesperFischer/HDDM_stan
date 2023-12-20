@@ -1,0 +1,391 @@
+
+sim_ddm = function(parameters){
+
+  N = parameters$N
+  
+  u = c()
+  for(i in 1:(N/50)){
+    u1 = c(rbinom(20,1,0.8),rbinom(20,1,0.2),rbinom(10,1,0.5))
+    u = c(u,u1)
+  }
+  
+  alpha = parameters$alpha
+  beta = parameters$beta
+  tau = parameters$tau_raw
+  lr = parameters$lr
+  e0 = 0.5
+  expectation = array(NA, N+1)
+  uncertainty = array(NA, N)
+  respx = array(NA, N+1)
+  expectation[1] = e0
+  
+  linear = parameters$linear
+  delta = parameters$delta
+  
+  
+  resp = data.frame()
+  for(i in 1:N){
+    if(!linear){
+      if(expectation[i] > 0.5){
+        uncertainty[i] = (-delta*(expectation[i]*(1-expectation[i])))+0.25*delta
+      }else if(expectation[i] < 0.5){
+        uncertainty[i] = -((-delta*(expectation[i]*(1-expectation[i])))+0.25*delta)
+      }else{
+        uncertainty[i] = 0 
+      }
+    }
+    if(linear){
+      uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+    }
+    
+    resp1 = rwiener(n = 1,
+                    alpha = alpha,
+                    delta = uncertainty[i],
+                    beta = beta,
+                    tau = tau)
+    
+    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+
+    resp = rbind(resp,resp1)
+  }
+  
+  resp$u = u
+  resp$expectation = expectation[1:N]
+  resp$uncertainty = uncertainty[1:N]
+  
+  resp$trial = 1:N
+  
+
+  resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
+  
+  resp$real_alpha = parameters$alpha
+  resp$real_beta = parameters$beta
+  resp$real_delta = parameters$delta
+  resp$real_tau = parameters$tau_raw
+  resp$real_lr = parameters$lr
+  
+  library(patchwork)
+  plot = resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
+    geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
+    geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
+    theme_classic()+
+    geom_line(aes(x=1:N, y = expectation))
+  
+  plot1 = resp %>% ggplot(aes(x = expectation, y = q))+
+    geom_point()+
+    theme_classic()+
+    geom_smooth()
+  
+  
+  plot = plot/plot1
+  return(list(resp, plot))  
+  
+}
+
+
+#names of outcomes are fit_(data_name)_(model_name)
+fit_pr = function(parameters){
+  
+  ## Linear data!
+  
+  source(here::here("report","RLDDM","parameter recovery","simulations.R"))
+  
+  parameter = data.frame(N = parameters$N,
+                         lr = parameters$lr,
+                         alpha = parameters$alpha,
+                         delta = parameters$delta,
+                         beta = parameters$beta,
+                         tau_raw = parameters$tau_raw,
+                         linear = T)
+  
+  resp = sim_ddm(parameter)[[1]]
+  
+  
+  #fitting models 
+  
+  ## linear DDM 
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+  
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = T,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_linear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_linear_linear = fit_linear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_linear_linear = data.frame(fit_linear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+ #non linear model
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = F,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_nonlinear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_linear_nonlinear = fit_nonlinear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_linear_nonlinear = data.frame(fit_nonlinear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  loos_linear = data.frame(loo::loo_compare(list(fit_linear = fit_linear$loo(),
+                                          fit_nonlinear = fit_nonlinear$loo()))) %>% 
+    mutate(diff_sd = -elpd_diff/se_diff,
+           id = parameters$id) %>% 
+    rownames_to_column() %>% 
+    rename(model = rowname)
+
+  
+  
+  #nonlinear data
+  
+  
+  parameter = data.frame(N = parameters$N,
+                         lr = parameters$lr,
+                         alpha = parameters$alpha,
+                         delta = parameters$delta,
+                         beta = parameters$beta,
+                         tau_raw = parameters$tau_raw,
+                         linear = F)
+  
+  resp = sim_ddm(parameter)[[1]]
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+  
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = T,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_linear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_nonlinear_linear = fit_linear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_nonlinear_linear = data.frame(fit_linear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  #non linear model
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = F,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_nonlinear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_nonlinear_nonlinear = fit_nonlinear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_nonlinear_nonlinear = data.frame(fit_nonlinear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  loos_nonlinear = data.frame(loo::loo_compare(list(fit_linear = fit_linear$loo(),
+                                          fit_nonlinear = fit_nonlinear$loo()))) %>% 
+    mutate(diff_sd = -elpd_diff/se_diff,
+           id = parameters$id) %>% 
+    rownames_to_column() %>% 
+    rename(model = rowname)
+  
+  
+  
+  
+  return(list(sum_linear_linear,
+              diag_linear_linear,
+              sum_linear_nonlinear,
+              diag_linear_nonlinear,
+              loos_linear,
+              sum_nonlinear_linear,
+              diag_nonlinear_linear,
+              sum_nonlinear_nonlinear,
+              diag_nonlinear_nonlinear,
+              loos_nonlinear
+  ))
+}
+
+
+
+fit_pr_to_simple_rw = function(parameters){
+  
+  source(here::here("report","RLDDM","parameter recovery","simulations.R"))
+  
+  parameter = data.frame(N = parameters$N,
+                         lr = parameters$lr,
+                         alpha = parameters$alpha,
+                         delta = parameters$delta,
+                         beta = parameters$beta,
+                         tau_raw = parameters$tau_raw,
+                         linear = T)
+  
+  resp = sim_ddm(parameter)[[1]]
+  
+  #fitting models 
+  
+  ## linear DDM 
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","RLDMM_v2.stan"))
+  
+  
+  data_stan = list(RT = resp %>% .$q,
+                   minRT = min(resp$q),
+                   run_estimation = 1,
+                   trials = nrow(resp),
+                   u = resp$u,
+                   linear = T,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_linear <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+  variables = c("lr","alpha","delta","beta","tau")
+  
+  sum_linear_linear = fit_linear$summary(variables = variables) %>% 
+    mutate(real_alpha = parameters$alpha,
+           real_beta = parameters$beta,
+           real_delta = parameters$delta,
+           real_tau = parameters$tau,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  diag_linear_linear = data.frame(fit_linear$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2.stan"))
+  
+  
+  data_stan = list(trials = nrow(resp),
+                   u = resp$u,
+                   resp = c(resp$resp2,0))
+  
+  
+  
+  fit_rl <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12,
+    refresh = 500
+  )
+  
+
+  variables = c("lr")
+  
+  sum_rw = fit_rl$summary(variables = variables) %>% 
+    mutate(real_zeta = NA,
+           real_lr = parameters$lr,
+           id = parameters$id,
+           N = parameters$N)
+  
+  
+  diag_rw = data.frame(fit_rl$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  
+  return(list(sum_linear_linear,
+              diag_linear_linear,
+              sum_rw,
+              diag_rw
+  ))
+  
+  
+}

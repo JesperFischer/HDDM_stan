@@ -1,0 +1,874 @@
+---
+title: "hier_rlddm"
+output: html_document
+date: "2023-11-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr)
+
+```
+
+## R Markdown
+
+```{r}
+trials = 100
+subjects = 10
+
+mu_alpha = 2
+sd_alpha = 0.5
+
+mu_delta = 2
+sd_delta = 0.5
+
+mu_beta = 0.5
+sd_beta = 0.1
+
+mu_tau = 0.3
+sd_tau = 0.1
+
+mu_lr = -1
+sd_lr = 1
+
+
+alphas = array(NA,subjects)
+deltas = array(NA,subjects)
+betas = array(NA,subjects)
+taus = array(NA,subjects)
+trials = rep(trials,subjects)
+
+alphas = truncnorm::rtruncnorm(subjects,0,Inf,mu_alpha, sd_alpha)
+deltas = rnorm(subjects,mu_delta, sd_delta)
+betas = brms::inv_logit_scaled(rnorm(subjects,mu_beta, sd_beta))
+taus = brms::inv_logit_scaled(rnorm(subjects,mu_tau, sd_tau))
+lr = brms::inv_logit_scaled(rnorm(subjects,mu_lr,sd_lr))
+
+
+
+apply_rwiener <- function(index, n, alpha, delta, beta, tau, lr, linear) {
+  
+    
+  u = c()
+  for(i in 1:(n/100)){
+    u1 = c(rbinom(25,1,0.8),rbinom(25,1,0.2),rbinom(25,1,0.8),rbinom(25,1,0.5))
+    u = c(u,u1)
+  }
+  
+  e0 = 0.5
+  expectation = array(NA, n+1)
+  uncertainty = array(NA, n)
+  respx = array(NA, n+1)
+  expectation[1] = e0
+  
+  linear = T
+  
+
+  resp = data.frame()
+  for(i in 1:n){
+    if(!linear){
+      if(expectation[i] > 0.5){
+        uncertainty[i] = (-delta*(expectation[i]*(1-expectation[i])))+0.25*delta
+      }else if(expectation[i] < 0.5){
+        uncertainty[i] = -((-delta*(expectation[i]*(1-expectation[i])))+0.25*delta)
+      }else{
+        uncertainty[i] = 0 
+      }
+    }
+    if(linear){
+      uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+    }
+    
+    resp1 = rwiener(n = 1,
+          alpha = alpha,
+          delta = uncertainty[i],
+          beta = beta,
+          tau = tau)
+    
+    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+    #respx[i] = rbinom(1,1,expectation[i])
+    
+    resp = rbind(resp,resp1)
+  }
+
+  resp$u = u
+  resp$expectation = expectation[1:n]
+  resp$uncertainty = uncertainty[1:n]
+  
+  resp$trial = 1:n
+  
+  #resp$respx = respx[1:n]
+  
+  resp$lr = lr
+  resp$delta = delta
+  resp$alpha = alpha
+  resp$tau = tau
+  resp$beta = beta
+  
+  
+  resp$index = index
+  
+  return(resp)
+  }
+```
+
+
+```{r}
+# Applying the function to each element of the vectors
+results_list <- mapply(apply_rwiener,
+                       index = 1:length(trials), 
+                       n = trials,
+                       alpha = alphas,
+                       delta = deltas, 
+                       beta = betas,
+                       tau = taus,
+                       lr = lr,
+                       linear = rep(T, subjects),
+                       SIMPLIFY = FALSE)
+
+#getting the results in a dataframe
+result_df <- do.call(rbind, results_list)
+
+
+result_df %>% ggplot(aes(x = trial, y = expectation))+geom_line()+facet_wrap(~index)+theme_classic()
+
+result_df %>% ggplot(aes(x = expectation, y = q))+geom_point()+facet_wrap(~index, scales = "free")+theme_classic()
+
+
+```
+
+
+
+```{r}
+
+result_df$n = 1:nrow(result_df)
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hierarchical Models","Hier_RLddm.stan"))
+
+data_stan = list(trials = nrow(result_df),
+                S = length(unique(result_df$index)),
+                S_id = result_df$index,
+                u = result_df$u,
+                trial_per_par = result_df %>% group_by(index) %>% filter(trial == 1) %>% .$n,
+                minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
+                RT = result_df$q,
+                resp = result_df %>% .$resp,
+                linear = T,
+                run_estimation = T
+)
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    refresh = 50,
+    max_treedepth = 12,
+    init = 0)
+
+
+
+
+replacements <- c("gm[1]" = "mu_delta",
+                "gm[2]" = "mu_alpha",
+                "gm[3]" = "mu_beta",
+                "gm[4]" = "mu_tau",
+                "gm[5]" = "mu_lr",
+                "tau_u[1]" = "sd_delta",
+                "tau_u[2]" = "sd_alpha",
+                "tau_u[3]" = "sd_beta",
+                "tau_u[4]" = "sd_tau",
+                "tau_u[5]" = "sd_lr"
+                )
+```
+
+Lets look at the summary of the model
+Note that:
+1 is delta
+2 is log(alpha)
+3 is logit(beta)
+4 is logit(tau)/min(RT)
+5 is lr
+
+```{r}
+flextable::flextable(as_draws_df(fit$summary()) %>% mutate(variable = case_when(
+    variable %in% names(replacements) ~ replacements[variable],
+    TRUE ~ variable
+  )) %>% mutate_if(is.numeric, round, digits = 2) %>% head(11))
+```
+
+
+```{r}
+variables = c("gm[1]","gm[2]","gm[3]","gm[4]","gm[5]",
+               "tau_u[1]","tau_u[2]","tau_u[3]","tau_u[4]","tau_u[5]")
+
+
+
+posteriors = as_draws_df(fit$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>%
+  mutate(name = case_when(
+    name %in% names(replacements) ~ replacements[name],
+    TRUE ~ name
+  )) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free", ncol = 4)+
+  theme_classic()
+
+
+## make it ready to combine with single subject fits:
+
+test = rbind(priors,posteriors) %>%
+  mutate(name = case_when(
+    name %in% names(replacements) ~ replacements[name],
+    TRUE ~ name),
+    variable = substr(name, 4, nchar(name)),
+    ID = NA)
+
+```
+
+
+```{r, fig.height=7,fig.width=10}
+source(here::here("report","Hierarchical models","ddm","scripts","plots.R"))
+
+variables = c("tau","alpha","delta","beta","lr")
+
+
+posteriors = as_draws_df(fit$draws(variables = variables)) %>% 
+  select(contains(variables)) %>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+
+priors = as_draws_df(fit$draws(variables = prior_variables)) %>% 
+  select(-c(.chain,.iteration,.draw)) %>% mutate(posterior = F) %>% 
+  rename_all(~sub("^prior_", "", .))
+
+
+
+#Density plot
+rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+  mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+  rbind(.,test) %>% 
+  ggplot(aes(x = value, y = name, fill = posterior))+
+    geom_density_ridges() + 
+    theme_ridges()+ylab("ID's")+
+  facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(4, scale_x_continuous(limits = c(0, 1))),
+    scale_override(5, scale_x_continuous(limits = c(0, 1)))
+  ))
+
+
+
+# Histogram
+rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+  mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+  rbind(.,test) %>% 
+  ggplot(aes(x = value, y = name, fill = posterior))+
+  geom_density_ridges(stat = "binline", bins = 50, scale = 0.95, draw_baseline = FALSE)+
+    theme_ridges()+ylab("ID's")+
+  facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(4, scale_x_continuous(limits = c(0, 1))),
+    scale_override(5, scale_x_continuous(limits = c(0, 1)))
+  ))
+```
+
+
+
+```{r, fig.height=7,fig.width=10}
+variables = c("alpha","tau","delta","beta","lr")
+
+plot_list <- list()
+
+for(variable1 in variables){
+  
+  
+  global_estimates = data.frame(ID = NA,
+                                name = c(paste0("mu_",variable1), paste0("sd_",variable1)),
+                                value = c(get(paste0("mu_",variable1)), get(paste0("sd_",variable1))),
+                                variable = variable1,
+                                posterior = NA)
+
+  
+  real_data = result_df %>% select(all_of(c(variables,"index"))) %>% 
+    pivot_longer(cols = variables, names_to = "variable") %>%
+    rename(ID = index) %>% 
+    distinct() %>% 
+    mutate(name = paste(variable, "[", ID, "]", sep = ""), posterior = NA) %>% 
+    filter(variable == variable1) %>% 
+    rbind(., global_estimates)%>%
+    mutate(value = ifelse(name == "mu_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "mu_lr", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_lr", inv_logit_scaled(value), value)
+           )
+    
+  
+  
+plotdata = rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+    mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+    rbind(.,test) %>% 
+    filter(variable == variable1) %>%
+    mutate(value = ifelse(name == "mu_alpha", exp(value), value),
+           value = ifelse(name == "sd_alpha", exp(value), value),
+           value = ifelse(name == "mu_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "mu_lr", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_lr", inv_logit_scaled(value), value)
+           )
+  
+    
+  plot_list[[variable1]] = plotdata %>% ggplot(aes(x = value, y = name,fill = posterior))+
+      geom_density_ridges() + 
+      theme_ridges()+
+    geom_segment(data = real_data, aes(x = value, xend = value, y = as.numeric(as.factor(name)),yend =  as.numeric(as.factor(name))+0.9), alpha = 0.5, linetype = 2, linewidth = 1.2)+
+      {if(variable1 == "alpha")scale_x_continuous(lim = c(0,10))}+
+      {if(variable1 == "tau")scale_x_continuous(lim = c(0,1))}+
+      {if(variable1 == "delta")scale_x_continuous(lim = c(-10,10))}+
+      {if(variable1 == "beta")scale_x_continuous(lim = c(0,1))}+
+      {if(variable1 == "lr")scale_x_continuous(lim = c(0,1))}+
+      ylab("ID's")
+  
+    # facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    #   scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    #   scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    #   scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    #   scale_override(4, scale_x_continuous(limits = c(0, 1)))
+    # ))
+  
+}
+
+
+# Create a 2x2 matrix layout
+library(patchwork)
+((plot_list[["alpha"]]+plot_list[["delta"]])/
+(plot_list[["tau"]]+plot_list[["beta"]]))/plot_list[["lr"]]+plot_layout(guides = "collect")
+
+```
+Predictive checks?
+#One problem if alpha gets to high the Rweiner runs kind of forever so setting a max of 8 on alpha here.
+```{r, fig.height=7,fig.width=10}
+#total number of trials:
+tnt = length(unique(result_df$index))*(length(unique(result_df$n))/length(unique(result_df$index)))
+
+
+n_draws = 10
+
+draww = rbinom(n_draws,4000,extraDistr::rprop(n_draws,1,0.5))
+
+
+
+parameters = as_draws_df(fit$draws()) %>% 
+  select(matches(c("alpha","tau","beta"))) %>% 
+  mutate(tau_raw = NULL) %>% 
+  select(-starts_with("prior_")) %>% 
+  mutate(draw = 1:nrow(.)) %>% 
+  slice(draww) %>% 
+  pivot_longer(-draw)%>% 
+  separate(name, into = c("Parameter", "ID"), sep = "\\[|\\]") %>% 
+  filter(Parameter != "tau_u") %>% 
+  mutate(ID = as.numeric(ID)) %>% group_by(draw, ID) %>% mutate(trial = list(1:100)) %>% unnest(trial)
+
+
+deltat = as_draws_df(fit$draws()) %>% 
+  select(matches(c("deltat"))) %>%
+  mutate(draw = 1:nrow(.)) %>% 
+  slice(draww) %>% 
+  pivot_longer(-draw) %>% 
+  mutate(n = as.numeric(gsub(".*\\[(\\d+)\\].*", "\\1", name))) %>% 
+  mutate(ID = as.numeric(cut(n, breaks = seq(0,tnt, by = 100), labels = seq(1,length(unique(result_df$index)), by = 1))),
+         trial = n-(ID*100-100),
+         n = NULL,
+         name = NULL,
+         Parameter = "deltat") %>% 
+  select(names(parameters))
+
+parameters = rbind(parameters,deltat)
+
+
+```
+
+
+```{r, fig.height=7,fig.width=10}
+parameters %>% mutate(value = ifelse((Parameter == "alpha" & value > 8), 8, value)) %>% 
+  filter(draw == draww[[1]]) %>% 
+  ungroup()%>% 
+  pivot_wider(names_from = Parameter, values_from = value,values_fn = {mean}) %>% 
+  rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]]) %>% 
+  ggplot(aes(predictedRT))+
+  geom_histogram(fill = "lightblue2", alpha = 0.7, col = "black")+
+  facet_wrap(~ID, scales = "free")+
+  theme_classic()+
+  geom_histogram(data = result_df %>% rename(ID = index), aes(x = q), alpha = 0.25, fill = "red", col = "black")
+  
+
+
+parameters %>% pivot_wider(names_from = Parameter, values_from = value,values_fn = {mean}) %>% 
+  filter(draw == draww[[1]]) %>% 
+  ungroup() %>% 
+  rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],
+                                                     predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]])%>% 
+  ggplot(aes(predictedRT), col = "black")+
+  geom_density(fill = "lightblue1", alpha = 0.5, col = "black")+
+  facet_wrap(~ID, scales = "free")+
+  theme_classic()+
+  geom_density(data = result_df %>% rename(ID = index), aes(x = q), alpha = 0.25, fill = "red", col = "black")
+
+
+
+parameters %>% pivot_wider(names_from = Parameter, values_from = value,values_fn = {mean}) %>% 
+  ungroup() %>% 
+  rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,deltat)[[1]],
+                                                     predictedresp = RWiener::rwiener(1,alpha,tau,beta,deltat)[[2]])%>% 
+  ggplot(aes(predictedRT), col = "black")+
+  geom_density(aes(group = draw),fill = "lightblue1", alpha = 0, col = "black")+
+  facet_wrap(~ID, scales = "free")+
+  theme_classic()+
+  geom_density(data = result_df %>% rename(ID = index), aes(x = q), alpha = 0.25, fill = "red", col = "black")
+
+
+
+```
+
+
+
+
+# Lets do some parameter recovery on this model!
+
+## fit model
+```{r}
+
+get_simulation = function(parameters){
+  
+trials = parameters$trials
+subjects = parameters$subjects
+
+mu_alpha = parameters$mu_alpha
+sd_alpha = parameters$sd_alpha
+
+mu_delta = parameters$mu_delta
+sd_delta = parameters$sd_delta
+
+mu_beta = parameters$mu_beta
+sd_beta = parameters$sd_beta
+
+mu_tau = parameters$mu_tau
+sd_tau = parameters$sd_tau
+
+mu_lr = parameters$mu_lr
+sd_lr =parameters$sd_lr
+
+
+alphas = array(NA,subjects)
+deltas = array(NA,subjects)
+betas = array(NA,subjects)
+taus = array(NA,subjects)
+lrs = array(NA, subjects)
+trials = rep(trials,subjects)
+
+
+alphas = truncnorm::rtruncnorm(subjects,0.01,Inf,mu_alpha, sd_alpha)
+deltas = rnorm(subjects,mu_delta, sd_delta)
+betas = brms::inv_logit_scaled(rnorm(subjects,mu_beta, sd_beta))
+taus = truncnorm::rtruncnorm(subjects,0.01,Inf,mu_tau, sd_tau)
+lr = brms::inv_logit_scaled(rnorm(subjects,mu_lr,sd_lr))
+
+
+
+apply_rwiener <- function(index, n, alpha, delta, beta, tau, lr, linear) {
+  
+    
+  u = c()
+  for(i in 1:(n/50)){
+    u1 = c(rbinom(20,1,0.8),rbinom(20,1,0.2),rbinom(10,1,0.5))
+    u = c(u,u1)
+  }
+  
+  e0 = 0.5
+  expectation = array(NA, n+1)
+  uncertainty = array(NA, n)
+  respx = array(NA, n+1)
+  expectation[1] = e0
+  
+  linear = T
+  
+
+  resp = data.frame()
+  for(i in 1:n){
+    if(!linear){
+      if(expectation[i] > 0.5){
+        uncertainty[i] = (-delta*(expectation[i]*(1-expectation[i])))+0.25*delta
+      }else if(expectation[i] < 0.5){
+        uncertainty[i] = -((-delta*(expectation[i]*(1-expectation[i])))+0.25*delta)
+      }else{
+        uncertainty[i] = 0 
+      }
+    }
+    if(linear){
+      uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+    }
+    
+    resp1 = rwiener(n = 1,
+          alpha = alpha,
+          delta = uncertainty[i],
+          beta = beta,
+          tau = tau)
+    
+    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+    #respx[i] = rbinom(1,1,expectation[i])
+    
+    resp = rbind(resp,resp1)
+  }
+
+  resp$u = u
+  resp$expectation = expectation[1:n]
+  resp$uncertainty = uncertainty[1:n]
+  
+  resp$trial = 1:n
+  
+  #resp$respx = respx[1:n]
+  
+  resp$lr = lr
+  resp$delta = delta
+  resp$alpha = alpha
+  resp$tau = tau
+  resp$beta = beta
+  
+  
+  resp$index = index
+  
+  return(resp)
+  }
+# Applying the function to each element of the vectors
+results_list <- mapply(apply_rwiener,
+                       index = 1:length(trials), 
+                       n = trials,
+                       alpha = alphas,
+                       delta = deltas, 
+                       beta = betas,
+                       tau = taus,
+                       lr = lr,
+                       linear = rep(T, subjects),
+                       SIMPLIFY = FALSE)
+
+#getting the results in a dataframe
+result_df <- do.call(rbind, results_list)
+
+return(result_df)
+}
+
+fit_model = function(parameters){
+  id = parameters$id
+  
+  result_df = get_simulation(parameters)
+  
+  result_df$n = 1:nrow(result_df)
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hierarchical Models","Hier_RLddm_nopriors.stan"))
+
+data_stan = list(trials = nrow(result_df),
+                S = length(unique(result_df$index)),
+                S_id = result_df$index,
+                u = result_df$u,
+                trial_per_par = result_df %>% group_by(index) %>% filter(trial == 1) %>% .$n,
+                minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
+                RT = result_df$q,
+                resp = result_df %>% .$resp,
+                linear = T,
+                run_estimation = T
+)
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    refresh = 50,
+    max_treedepth = 12,
+    init = 0)
+
+
+  global_estimates = c("gm[1]","gm[2]","gm[3]","gm[4]","gm[5]",
+               "tau_u[1]","tau_u[2]","tau_u[3]","tau_u[4]","tau_u[5]")
+
+  
+  subject_estimates = c("tau","alpha","delta","beta","lr")
+  
+  pattern <- paste0("(", paste(subject_estimates, collapse = "|"), ")\\[\\d+\\]")
+
+  
+  diag = data.frame(fit$diagnostic_summary(), id)
+
+
+  posteriors_global_estimates = as_draws_df(fit$summary()) %>% 
+    filter(variable %in% global_estimates) %>% mutate(trials =  nrow(result_df)/length(unique(result_df$index)),
+                                                      subjects = length(unique(result_df$index)),
+                                                      id = id,
+                                                      real_mu_alpha = parameters$mu_alpha,
+                                                      real_sd_alpha = parameters$sd_alpha,
+                                                      real_mu_beta = parameters$mu_beta,
+                                                      real_sd_beta = parameters$sd_beta,
+                                                      real_mu_tau = parameters$mu_tau,
+                                                      real_sd_tau = parameters$sd_tau,
+                                                      real_mu_delta = parameters$mu_delta,
+                                                      real_sd_delta = parameters$sd_delta,
+                                                      real_mu_lr = parameters$mu_lr,
+                                                      real_sd_lr = parameters$sd_lr
+                                                      )
+    
+  
+  
+  posteriors_subject_estimates = as_draws_df(fit$summary()) %>% 
+    mutate(extracted_variable = str_extract(as_draws_df(fit$summary()) %>% .$variable, pattern)) %>% 
+    drop_na() %>% mutate(reals = c(rep("alpha", parameters$subjects),
+                                   rep("beta", parameters$subjects),
+                                   rep("delta", parameters$subjects),
+                                   rep("tau", parameters$subjects),
+                                   rep("lr", parameters$subjects)),
+                         real_values = c(unique(result_df$alpha),
+                                         unique(result_df$beta),
+                                         unique(result_df$delta),
+                                         unique(result_df$tau),
+                                         unique(result_df$lr)),
+                         trials = parameters$trials,
+                         id = id) %>% 
+    select(-contains("."))
+
+  
+  
+  return(list(posteriors_global_estimates,posteriors_subject_estimates, diag))
+}
+
+
+trials = seq(50,150,by = 50)
+#trials = 100
+subjects = seq(10,20,by = 10)
+#subject = 10
+
+mu_alpha = seq(1,3,by = 1)
+#mu_alpha = c(2,3)
+sd_alpha = seq(1,2,by = 1)
+sd_alpha = 0.5
+
+
+mu_delta = seq(1,3,by = 1)
+#mu_delta = c(2,3)
+
+sd_delta = seq(1,3,by = 1)
+sd_delta = 0.5
+
+mu_beta = seq(0.4,0.6,by = 0.2)
+mu_beta = 0.5
+sd_beta = seq(0.1,0.2,by = 1)
+sd_beta = 0.2
+mu_tau = seq(0.3,0.4,by = 0.1)
+mu_tau = 0.3
+
+sd_tau = seq(0.1,0.2,by = 0.1)
+sd_tau = 0.1
+
+mu_lr = seq(-2,2,by = 1)
+#mu_lr = c(-2,1)
+
+sd_lr = seq(0.5,1,by = 0.5)
+sd_lr = 0.5
+
+replicate = 1:1
+
+parameters = expand.grid(mu_alpha = mu_alpha,
+                         sd_alpha = sd_alpha,
+                         mu_delta = mu_delta,
+                         sd_delta = sd_delta,
+                         mu_beta = mu_beta,
+                         sd_beta = sd_beta,
+                         mu_tau = mu_tau,
+                         sd_tau = sd_tau,
+                         mu_lr = mu_lr,
+                         sd_lr = sd_lr,
+                         subjects = subjects,
+                         trials = trials,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+
+data_list <- split(parameters, parameters$id)
+
+test = fit_model(data_list[[173]])
+ff = test[[1]]
+```
+
+
+
+```{r}
+cores = availableCores()-1
+
+plan(multisession, workers = cores)
+
+possfit_model = possibly(.f = fit_model, otherwise = "Error")
+
+#test = possfit_model(data_list[[1]])
+
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+```
+
+
+```{r}
+load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play2_ws.RData")
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+divergence = purrr::map_dfr(results2,3)
+
+divergence %>% median_qi(num_divergent)
+
+divergence%>% ggplot(aes(x = num_divergent))+geom_histogram()
+```
+
+```{r}
+params = map_dfr(results2, 1)
+
+variables = c("gm[1]","gm[2]","gm[3]","gm[4]","gm[5]")
+replacements <- c("gm[1]" = "mu_delta",
+                  "gm[2]" = "mu_alpha",
+                  "gm[3]" = "mu_beta",
+                  "gm[4]" = "mu_tau",
+                  "gm[5]" = "mu_lr")
+
+
+get_parameter_plots = function(variables, histogram){
+
+  plot_list = list()
+  for(variable1 in variables){
+
+      renaming = params %>% filter(variable == variable1) %>% 
+      mutate(variable = coalesce(replacements[variable], variable))
+    
+    variable1 = renaming$variable[1]
+        
+    if(variable1 == "mu_alpha"){
+      renaming$mean = exp(renaming$mean)
+    }
+    
+    plot = renaming %>% filter(variable == variable1) %>% 
+      mutate(real = get(paste0("real_",variable1))) %>% 
+      ggplot(aes(x = mean, fill = as.factor(real)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      geom_vline(aes(xintercept = real))+
+      facet_grid(subjects~trials, labeller = label_both)+
+      {if(variable1 == "tau")coord_cartesian(xlim = c(0,.5))}+
+      ggtitle(variable1)+
+      theme(legend.position = "top")
+    
+    plot_list[[variable1]] = plot
+  }
+  return(plot_list)
+}
+
+plots = get_parameter_plots(variables = variables,histogram = FALSE)
+
+(plots[["mu_alpha"]]+plots[["mu_delta"]])/plots[["mu_lr"]]
+
+(plots[["mu_tau"]]+plots[["mu_beta"]])
+
+
+plots_hist = get_parameter_plots(variables = variables,histogram = TRUE)
+
+(plots_hist[["mu_alpha"]]+plots_hist[["mu_delta"]])/plots_hist[["mu_lr"]]
+
+
+(plots_hist[["mu_tau"]]+plots_hist[["mu_beta"]])
+
+
+
+histogram = T
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_delta") %>% 
+      mutate(real = get(paste0("real_","mu_delta"))) %>% 
+      ggplot(aes(x = mean, fill = as.factor(real)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      geom_vline(aes(xintercept = real))+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_delta") %>% 
+      mutate(real = get(paste0("real_","mu_delta"))) %>% 
+  mutate(dif = mean-real) %>% 
+      ggplot(aes(x = dif, fill = as.factor(trials)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~real_mu_alpha, labeller = label_both)+
+      theme(legend.position = "top")
+
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_delta") %>% 
+      mutate(real = get(paste0("real_","mu_delta"))) %>% 
+  mutate(dif = mean-real) %>% 
+      ggplot(aes(x = dif, fill = as.factor(trials)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~real_mu_lr, labeller = label_both)+
+      theme(legend.position = "top")
+
+
+```
+
+
+
+```{r}
+subj = map_dfr(results2, 2)
+
+subj %>% mutate(dif = mean-real_values) %>% 
+  ggplot(aes(x = dif))+
+  geom_histogram(col = "black")+
+  facet_grid(trials~reals, scales = "free")
+
+subj %>% mutate(dif = mean-real_values) %>% 
+  ggplot(aes(x = mean, y = real_values))+geom_point()+
+  facet_grid(trials~reals, scales = "free")+
+  geom_abline(slope = 1, intercept = 0, col = "red")
+
+
+#try and fill with group mean of delta or something to see the influence of that
+subj %>% 
+  filter(grepl("alpha",variable)) %>% 
+  mutate(dif = mean-real_values) %>% 
+  ggplot(aes(x = dif))+
+  geom_histogram(col = "black")+
+  facet_grid(trials~reals, scales = "free")
+
+
+```
+
+
+

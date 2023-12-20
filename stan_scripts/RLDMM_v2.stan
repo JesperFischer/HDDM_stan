@@ -17,7 +17,7 @@ data {
   
   vector[trials] RT;
   
-  array[trials] int resp;
+  array[trials+1] int resp;
   
   vector[trials] u;
   

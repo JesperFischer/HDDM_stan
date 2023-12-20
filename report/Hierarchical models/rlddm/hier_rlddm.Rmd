@@ -713,9 +713,7 @@ ff = test[[1]]
 ```
 
 
-
 ```{r}
-
 cores = availableCores()-1
 
 plan(multisession, workers = cores)
@@ -725,14 +723,36 @@ possfit_model = possibly(.f = fit_model, otherwise = "Error")
 #test = possfit_model(data_list[[1]])
 
 results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+```
 
-error_indices <- which(results == "Error")
 
-unique(error_indices)
+```{r}
 
-results2 = results[results != "Error"]
-
-divergence = purrr::map_dfr(results2,3)
+# load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play_v3.RData")
+# params1 = map_dfr(results, 1) %>% mutate(id = id+500)
+# subj1 = map_dfr(results, 2)%>% mutate(id = id+500)
+# divergence1 = map_dfr(results, 3)%>% mutate(id = id+500)
+# 
+# load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play_v3x2.RData")
+# params = map_dfr(results, 1)
+# subj = map_dfr(results, 2)
+# divergence = map_dfr(results, 3)
+# 
+# params = rbind(params,params1)
+# subj = rbind(subj,subj1)
+# divergence = rbind(divergence,divergence1)
+# 
+# #results = c(results,results3)
+# 
+# load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play_real.RData")
+# 
+# error_indices <- which(results == "Error")
+# 
+# unique(error_indices)
+# 
+# results2 = results[results != "Error"]
+# 
+# divergence = purrr::map_dfr(results2,3)
 
 divergence %>% median_qi(num_divergent)
 
@@ -740,7 +760,7 @@ divergence%>% ggplot(aes(x = num_divergent))+geom_histogram()
 ```
 
 ```{r}
-params = map_dfr(results2, 1)
+#params = map_dfr(results2, 1)
 
 variables = c("gm[1]","gm[2]","gm[3]","gm[4]","gm[5]")
 replacements <- c("gm[1]" = "mu_delta",
@@ -771,7 +791,7 @@ get_parameter_plots = function(variables, histogram){
       {if(!histogram)geom_density(alpha = 0.75)}+
       theme_classic()+
       geom_vline(aes(xintercept = real))+
-      facet_wrap(~trials, labeller = label_both)+
+      facet_grid(subjects~trials, labeller = label_both)+
       {if(variable1 == "tau")coord_cartesian(xlim = c(0,.5))}+
       ggtitle(variable1)+
       theme(legend.position = "top")
@@ -783,27 +803,171 @@ get_parameter_plots = function(variables, histogram){
 
 plots = get_parameter_plots(variables = variables,histogram = FALSE)
 
-(plots[["mu_alpha"]]+plots[["mu_delta"]])/(plots[["mu_tau"]]+plots[["mu_beta"]])
+(plots[["mu_alpha"]]+plots[["mu_delta"]])
+
 plots[["mu_lr"]]
+
+(plots[["mu_tau"]]+plots[["mu_beta"]])
+
 
 plots_hist = get_parameter_plots(variables = variables,histogram = TRUE)
 
-(plots_hist[["mu_alpha"]]+plots_hist[["mu_delta"]])/(plots_hist[["mu_tau"]]+plots_hist[["mu_beta"]])
+(plots_hist[["mu_alpha"]]+plots_hist[["mu_delta"]])
 
 plots_hist[["mu_lr"]]
 
-```
-```{r}
-subj = map_dfr(results2, 2)
 
-subj %>% mutate(dif = mean-real_values) %>% ggplot(aes(x = dif))+geom_histogram()+facet_grid(trials~reals, scales = "free")
+(plots_hist[["mu_tau"]]+plots_hist[["mu_beta"]])
+
+
+
+histogram = T
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_delta") %>% 
+      mutate(real = get(paste0("real_","mu_delta"))) %>% 
+      ggplot(aes(x = mean, fill = as.factor(real)))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      geom_vline(aes(xintercept = real))+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_delta") %>% 
+      mutate(real = get(paste0("real_","mu_delta"))) %>% 
+  mutate(dif = mean-real) %>% 
+      ggplot(aes(x = dif))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")+
+  ggtitle("delta")
+
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_lr") %>% 
+      mutate(real = get(paste0("real_","mu_lr"))) %>% 
+  mutate(dif = mean-real) %>% 
+      ggplot(aes(x = dif))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")+
+  ggtitle("lr")
+
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_alpha") %>% 
+      mutate(real = get(paste0("real_","mu_alpha"))) %>% 
+  mutate(dif = exp(mean)-real) %>% 
+      ggplot(aes(x = dif))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")+
+  ggtitle("alpha")
+
+
+
+params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_beta") %>% 
+      mutate(real = get(paste0("real_","mu_beta"))) %>% 
+  mutate(dif = (mean)-real) %>% 
+      ggplot(aes(x = dif))+
+      {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
+      {if(!histogram)geom_density(alpha = 0.75)}+
+      theme_classic()+
+      facet_grid(subjects~trials, labeller = label_both)+
+      theme(legend.position = "top")+
+  ggtitle("alpha")
+
+
+```
+
+
+
+```{r}
+#subj = map_dfr(results2, 2)
+
+subj %>% mutate(dif = mean-real_values) %>% 
+  ggplot(aes(x = dif))+
+  geom_histogram(col = "black")+
+  facet_grid(trials~reals, scales = "free")
 
 subj %>% mutate(dif = mean-real_values) %>% 
   ggplot(aes(x = mean, y = real_values))+geom_point()+
   facet_grid(trials~reals, scales = "free")+
   geom_abline(slope = 1, intercept = 0, col = "red")
 
+
+#try and fill with group mean of delta or something to see the influence of that
+subj %>% 
+  filter(grepl("alpha",variable)) %>% 
+  mutate(dif = mean-real_values) %>% 
+  ggplot(aes(x = dif))+
+  geom_histogram(col = "black")+
+  facet_grid(trials~reals, scales = "free")
 ```
 
 
+```{r}
+inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("alpha",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = dif))+
+    geom_histogram(col = "black")+
+    facet_grid(trials~subjects, scales = "free")
+
+
+
+inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("alpha",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = subj_mean, y = real_subj_values, col = real_sd_alpha, shape = as.factor(real_mu_alpha)))+
+    geom_point(alpha = 0.08)+
+    facet_grid(trials~subjects, scales = "free")
+
+
+inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("delta",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = subj_mean, y = real_subj_values, col = real_sd_delta, shape = as.factor(real_mu_delta)))+
+    geom_point(alpha = 0.08)+
+    facet_grid(trials~subjects, scales = "free")
+
+
+
+inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("lr",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = subj_mean, y = real_subj_values, col = real_sd_lr))+
+    geom_point(alpha = 0.08)+
+    facet_grid(trials~subjects, scales = "free")
+
+inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("lr",subj_var)) %>% 
+    mutate(dif = subj_mean-real_subj_values) %>% 
+    ggplot(aes(x = subj_mean, y = real_subj_values, col = real_mu_lr))+
+    geom_point(alpha = 0.08)+
+    facet_grid(trials~subjects, scales = "free")
+
+```
 
