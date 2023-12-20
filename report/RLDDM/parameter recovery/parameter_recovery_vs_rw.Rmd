@@ -327,3 +327,173 @@ plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta")))+
 
 ```
 
+
+```{r}
+
+source(here::here("report","RLDDM","parameter recovery","simulations.R"))
+
+samples = 10000
+N = sample(c(50,100,150,200,250,300),samples, replace = T)
+
+alpha = runif(samples,0.5,5)
+
+beta = runif(samples,0.2,0.8)
+
+delta = runif(samples,0,5)
+tau_raw = runif(samples,0.1,0.5)
+
+lr = runif(samples,0,0.8)
+
+
+params = data.frame(N = N,
+                     lr = lr,
+                     alpha = alpha,
+                     beta = beta,
+                     delta = delta,
+                     tau_raw = tau_raw) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+#fit_pr_to_simple_rw(data_list[[250]])
+
+ cores = availableCores()
+# 
+plan(multisession, workers = availableCores())
+# 
+# 
+possfit_model = possibly(.f = fit_pr_to_simple_rw, otherwise = "Error")
+# 
+#possfit_model(data_list[[1]])
+# 
+# 
+
+results <- future_map(data_list, ~possfit_model(.x),
+                       .progress = TRUE,
+                       .options = furrr_options(seed = TRUE))
+
+
+
+error_indices <- which(results == "Error")
+results[[1]]
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+divergence = purrr::map_dfr(results2,3)
+
+divergence %>% median_qi(num_divergent)
+
+divergence%>% ggplot(aes(x = num_divergent))+geom_histogram()
+```
+
+
+
+```{r}
+load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm_vs_rl_contin1.RData"))
+
+
+
+error_indices <- which(results == "Error")
+results[[1]]
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+
+divergence = map_dfr(results2, 4)
+
+divergence %>%
+  pivot_longer(cols = c(num_divergent, num_max_treedepth)) %>%
+  ggplot(aes(x = value))+facet_wrap(~name)+geom_histogram()
+
+
+
+
+results_ddm = map_dfr(results2, 1) %>% mutate(fitted = "DDM") %>% dplyr::select(id,mean,real_lr,variable,N,fitted,real_delta,real_alpha, real_beta, real_tau)
+results_rw = map_dfr(results2, 3) %>% mutate(fitted = "RW") %>% dplyr::select(id,mean,real_lr,variable,N,fitted,real_delta, real_alpha, real_beta, real_tau)
+
+
+
+
+rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+  ggplot(aes(x = dif, fill = fitted))+geom_histogram(col = "black", alpha = 0.6,position = "identity")+facet_wrap(~Trial_number)
+
+
+rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+  mutate(real_delta2 = cut(as.numeric(as.character(real_delta)), breaks = 0:5)) %>% 
+  mutate(real_delta = as.numeric(as.character(real_delta))) %>% 
+  ggplot(aes(x = dif, col = fitted, y = real_delta))+geom_point(alpha = 0.6,position = "identity")+facet_wrap(~Trial_number)+
+  scale_y_continuous(breaks = seq(0,5,by = 1), labels = seq(0,5,by = 1))
+
+
+
+rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+  mutate(real_delta2 = cut(as.numeric(as.character(real_delta)), breaks = 0:5)) %>% 
+  mutate(real_delta = as.numeric(as.character(real_delta))) %>% 
+  ggplot(aes(x = dif, col = fitted, y = real_delta))+geom_point(alpha = 0.6,position = "identity")+facet_wrap(~Trial_number)+
+  scale_y_continuous(breaks = seq(0,5,by = 1), labels = seq(0,5,by = 1))
+
+
+
+
+
+```
+
+
+```{r}
+dd = rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N)
+
+library(gamlss)
+
+ss = gamlss::gamlss(mean ~ fitted+real,
+               sigma.formula = ~ fitted+real,
+               data = dd)
+
+summary(ss)
+
+ss = gamlss::gamlss(mean ~ fitted*real,
+               sigma.formula = ~ fitted*real,
+               data = dd)
+
+summary(ss)
+
+
+ss = gamlss::gamlss(mean ~ fitted*real*real_delta+Trial_number,
+               sigma.formula = ~ fitted*real*real_delta+Trial_number,
+               data = dd)
+
+summary(ss)
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
+
+
+```
+
