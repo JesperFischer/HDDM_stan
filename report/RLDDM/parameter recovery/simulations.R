@@ -83,66 +83,6 @@ sim_ddm = function(parameters){
 }
 
 
-sim_rw = function(parameters){
-  N = parameters$N
-  
-  u = c()
-  for(i in 1:(N/50)){
-    u1 = c(rbinom(20,1,0.8),rbinom(20,1,0.2),rbinom(10,1,0.5))
-    u = c(u,u1)
-  }
-  
-  lr = parameters$lr
-  e0 = 0.5
-  expectation = array(NA, N+1)
-  expectation[1] = e0
-  
-  
-  
-  resp = data.frame()
-  for(i in 1:N){
-  
-    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
-    
-    
-    
-    resp = rbind(resp,resp1)
-  }
-  
-  resp$u = u
-  resp$expectation = expectation[1:N]
-  resp$uncertainty = uncertainty[1:N]
-  
-  resp$trial = 1:N
-  
-  
-  resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
-  
-  resp$real_alpha = parameters$alpha
-  resp$real_beta = parameters$beta
-  resp$real_delta = parameters$delta
-  resp$real_tau = parameters$tau_raw
-  resp$real_lr = parameters$lr
-  
-  library(patchwork)
-  plot = resp %>% mutate(resp = ifelse(resp == "upper",1.05,-0.05)) %>% ggplot()+
-    geom_point(aes(x = 1:N, y = u),alpha = 0.1, col = "red")+
-    geom_point(aes(x = 1:N, y = resp),alpha = 0.1, col = "green")+
-    theme_classic()+
-    geom_line(aes(x=1:N, y = expectation))
-  
-  plot1 = resp %>% ggplot(aes(x = expectation, y = q))+
-    geom_point()+
-    theme_classic()+
-    geom_smooth()
-  
-  
-  plot = plot/plot1
-  return(list(resp, plot))  
-  
-}
-
-
 #names of outcomes are fit_(data_name)_(model_name)
 fit_pr = function(parameters){
   

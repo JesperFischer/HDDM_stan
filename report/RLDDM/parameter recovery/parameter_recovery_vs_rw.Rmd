@@ -114,7 +114,7 @@ load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm
   
       p = results %>%
         mutate(across(all_of(contains("real_")), as.factor)) %>% 
-        filter(id %in% ids_no_div, variable == variables) %>%
+        filter(variable == variables) %>%
         mutate(real = .[[paste0("real_", variables)]]) %>% 
         mutate(real2 = as.numeric(as.character(real))) %>% 
         rename(Trial_number = N) %>% 
@@ -122,7 +122,7 @@ load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm
         geom_histogram(col = "black", alpha = 0.5, position="identity")+
         theme_classic()+
         geom_vline(aes(xintercept = real2), alpha = 0.5, linetype = 2)+
-        facet_wrap(~Trial_number, labeller = label_both)+
+        facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
         theme(legend.position = "top")+
         ggtitle(paste0(variables))
 
@@ -146,7 +146,7 @@ results = map_dfr(results2, 3)
   
    results %>%
     mutate(across(all_of(contains("real_")), as.factor)) %>% 
-    filter(id %in% ids_no_div, variable == "lr") %>%
+    filter(variable == "lr") %>%
     mutate(real = .[[paste0("real_", "lr")]]) %>% 
     mutate(real2 = as.numeric(as.character(real))) %>% 
     rename(Trial_number = N) %>% 
@@ -154,7 +154,7 @@ results = map_dfr(results2, 3)
     geom_histogram(col = "black", alpha = 0.5, position="identity")+
     theme_classic()+
     geom_vline(aes(xintercept = real2), alpha = 0.5, linetype = 2)+
-    facet_wrap(~Trial_number, labeller = label_both)+
+    facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
     theme(legend.position = "top")+
     ggtitle(paste0("lr"))
 ```
@@ -162,13 +162,13 @@ results = map_dfr(results2, 3)
 
 #Difference plots
 
-```{r}
+```{r, fig.width=10, fig.height=7}
 
 results = map_dfr(results2, 3)
 
-results %>%
+rw = results %>%
     mutate(across(all_of(contains("real_")), as.factor)) %>% 
-    filter(id %in% ids_no_div, variable == "lr") %>%
+    filter(variable == "lr") %>%
     mutate(real = .[[paste0("real_", "lr")]]) %>% 
     mutate(real2 = as.numeric(as.character(real))) %>% 
     mutate(dif = mean-real2) %>% 
@@ -177,26 +177,9 @@ results %>%
     geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
     geom_histogram(col = "black", alpha = 0.5, position="identity")+
     theme_classic()+
-    facet_wrap(~Trial_number, labeller = label_both)+
+    facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
     theme(legend.position = "top")+
     ggtitle(paste0("lr (RW)"))
-
-
-results %>%
-    mutate(across(all_of(contains("real_")), as.factor)) %>% 
-    filter(id %in% ids_no_div, variable == "lr") %>%
-    mutate(real = .[[paste0("real_", "lr")]]) %>% 
-    mutate(real2 = as.numeric(as.character(real))) %>% 
-    mutate(dif = mean-real2) %>% 
-    rename(Trial_number = N) %>% 
-    ggplot(aes(x = dif, fill = real))+
-    geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
-    geom_histogram(col = "black", alpha = 0.5, position="identity")+
-    theme_classic()+
-    facet_wrap(~Trial_number, labeller = label_both)+
-    theme(legend.position = "top")+
-    ggtitle(paste0("lr (RW)"))
-
 
 
 
@@ -204,9 +187,9 @@ results %>%
 
 results = map_dfr(results2, 1)
 
-results %>%
+ddm = results %>%
     mutate(across(all_of(contains("real_")), as.factor)) %>% 
-    filter(id %in% ids_no_div, variable == "lr") %>%
+    filter(variable == "lr") %>%
     mutate(real = .[[paste0("real_", "lr")]]) %>% 
     mutate(real2 = as.numeric(as.character(real))) %>% 
     mutate(dif = mean-real2) %>% 
@@ -215,14 +198,132 @@ results %>%
     geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
     geom_histogram(col = "black", alpha = 0.5, position="identity")+
     theme_classic()+
-    facet_wrap(~Trial_number, labeller = label_both)+
+    facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
     theme(legend.position = "top")+
     ggtitle(paste0("lr (DDM)"))
 
 
+rw/ddm
 
+
+results = map_dfr(results2, 1)
+
+results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+    ggplot(aes(x = dif, y = real_delta, col = real))+
+    geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
+    geom_point(alpha = 0.5, position="identity")+
+    theme_classic()+
+    facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
+  scale_x_continuous(lim = c(-0.6,0.6),breaks = c(-0.6,-0.3,0,0.3,0.6),labels = c(-0.6,-0.3,0,0.3,0.6))+
+    theme(legend.position = "top")+
+    ggtitle(paste0("lr (DDM)"))
+
+
+results = map_dfr(results2, 3)
+
+results %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+    ggplot(aes(x = dif, y = real_delta, col = real))+
+    geom_vline(aes(xintercept = 0), alpha = 0.5, linetype = 2)+
+    geom_point(alpha = 0.5, position="identity")+
+    theme_classic()+
+    facet_wrap(~Trial_number, labeller = label_both, ncol = 4)+
+  scale_x_continuous(lim = c(-0.6,0.6),breaks = c(-0.6,-0.3,0,0.3,0.6),labels = c(-0.6,-0.3,0,0.3,0.6))+
+    theme(legend.position = "top")+
+    ggtitle(paste0("lr (RW)"))
+
+
+
+
+results_ddm = map_dfr(results2, 1) %>% mutate(fitted = "DDM") %>% dplyr::select(id,mean,real_lr,variable,N,fitted,real_delta,real_alpha)
+results_rw = map_dfr(results2, 3) %>% mutate(fitted = "RW") %>% dplyr::select(id,mean,real_lr,variable,N,fitted,real_delta, real_alpha)
+
+
+
+
+rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+  group_by(real_delta, Trial_number,real,fitted) %>% 
+  summarise(mean = mean(dif), sd = sd(dif)) %>% 
+  mutate(real = as.numeric(as.character(real))) %>% 
+  mutate(real = ifelse(fitted == "DDM", real-0.04,real)) %>% 
+  ggplot(aes(x = mean, y = real, xmin = mean-2*sd, xmax = mean+2*sd, col = fitted))+
+  geom_pointrange()+
+  facet_wrap(Trial_number~real_delta, labeller = label_both)+
+  theme_classic()
+
+
+rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N) %>% 
+  group_by(real_delta, Trial_number,real,fitted,real_alpha) %>% 
+  summarise(mean = mean(dif), sd = sd(dif)) %>% 
+  mutate(real = as.numeric(as.character(real))) %>% 
+  mutate(real = ifelse(fitted == "DDM", real-0.04,real)) %>% 
+  ggplot(aes(x = mean, y = real, xmin = mean-2*sd, xmax = mean+2*sd, col = fitted))+
+  geom_pointrange()+
+  facet_grid(Trial_number~real_delta+real_alpha, labeller = label_both)+
+  theme_classic()
 
 
 ```
 
+
+```{r}
+dd = rbind(results_rw,results_ddm) %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    filter(variable == "lr") %>%
+    mutate(real = .[[paste0("real_", "lr")]]) %>% 
+    mutate(real2 = as.numeric(as.character(real))) %>% 
+    mutate(dif = mean-real2) %>% 
+    rename(Trial_number = N)
+
+library(gamlss)
+
+ss = gamlss::gamlss(mean ~ fitted+real,
+               sigma.formula = ~ fitted+real,
+               data = dd)
+
+summary(ss)
+
+ss = gamlss::gamlss(mean ~ fitted*real,
+               sigma.formula = ~ fitted*real,
+               data = dd)
+
+summary(ss)
+
+
+ss = gamlss::gamlss(mean ~ fitted*real*real_delta+Trial_number,
+               sigma.formula = ~ fitted*real*real_delta+Trial_number,
+               data = dd)
+
+summary(ss)
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
+
+
+```
 
