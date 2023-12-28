@@ -390,7 +390,7 @@ divergence%>% ggplot(aes(x = num_divergent))+geom_histogram()
 
 
 ```{r}
-load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm_vs_rl_contin1.RData"))
+load(here::here("report","RLDDM","parameter recovery","workspace","results_rlddm_vs_rl_contin2.RData"))
 
 
 
@@ -440,22 +440,6 @@ rbind(results_rw,results_ddm) %>%
 
 
 
-rbind(results_rw,results_ddm) %>%
-    mutate(across(all_of(contains("real_")), as.factor)) %>% 
-    filter(variable == "lr") %>%
-    mutate(real = .[[paste0("real_", "lr")]]) %>% 
-    mutate(real2 = as.numeric(as.character(real))) %>% 
-    mutate(dif = mean-real2) %>% 
-    rename(Trial_number = N) %>% 
-  mutate(real_delta2 = cut(as.numeric(as.character(real_delta)), breaks = 0:5)) %>% 
-  mutate(real_delta = as.numeric(as.character(real_delta))) %>% 
-  ggplot(aes(x = dif, col = fitted, y = real_delta))+geom_point(alpha = 0.6,position = "identity")+facet_wrap(~Trial_number)+
-  scale_y_continuous(breaks = seq(0,5,by = 1), labels = seq(0,5,by = 1))
-
-
-
-
-
 ```
 
 
@@ -466,9 +450,14 @@ dd = rbind(results_rw,results_ddm) %>%
     mutate(real = .[[paste0("real_", "lr")]]) %>% 
     mutate(real2 = as.numeric(as.character(real))) %>% 
     mutate(dif = mean-real2) %>% 
-    rename(Trial_number = N)
+    rename(Trial_number = N) %>% 
+    mutate(real = as.numeric(as.character(real)),
+           real_delta = as.numeric(as.character(real_delta)),
+           real_alpha = as.numeric(as.character(real_alpha)),
+           )
 
-library(gamlss)
+  
+
 
 ss = gamlss::gamlss(mean ~ fitted+real,
                sigma.formula = ~ fitted+real,
@@ -481,19 +470,46 @@ ss = gamlss::gamlss(mean ~ fitted*real,
                data = dd)
 
 summary(ss)
+dd1 = dd %>% filter(real_delta > 1, real_delta < 2)
+ss = gamlss::gamlss(mean ~ fitted*real*Trial_number,
+               sigma.formula = ~ fitted*real*Trial_number,
+               data = dd1)
+
+summary(ss)
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","Trial_number")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","Trial_number"), what = "sigma"))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
 
 
-ss = gamlss::gamlss(mean ~ fitted*real*real_delta+Trial_number,
-               sigma.formula = ~ fitted*real*real_delta+Trial_number,
+ss = gamlss::gamlss(mean ~ fitted*real*real_delta*Trial_number*real_alpha,
+               sigma.formula = ~ fitted*real*real_delta*Trial_number*real_alpha,
                data = dd)
 
 summary(ss)
 
+gamlss::Rsq(ss)
 
-plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta")))+
+gamlss::predictAll(ss, newdata = data.frame(fitted = "DDM", Trial_number = 50,real_delta = 1, real = 0.3, real_alpha = 1))
+gamlss::predictAll(ss, newdata = data.frame(fitted = "RW", Trial_number = 50,real_delta = 1, real = 0.3, real_alpha = 1))
+
+
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta","Trial_number"), what = "sigma"))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","fitted","real_delta","Trial_number")))+
   geom_abline(slope = 1, intercept = 0, linewidth = 1)+
   geom_point()
 
 
 ```
+
 
