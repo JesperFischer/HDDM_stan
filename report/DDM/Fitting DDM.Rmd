@@ -472,11 +472,11 @@ plot(ggeffects::ggpredict(model_gam, terms = c("real","real_beta","real_delta [-
 
 ```{r}
 
-trials = round(runif(500,50,500),0)
-alpha = runif(500,0.2,7)
-delta = runif(500,-5,5)
-beta = runif(500,0.1,0.9)
-tau = runif(500,0.1,2)
+trials = round(runif(1000,50,500),0)
+alpha = runif(1000,0.2,7)
+delta = runif(1000,-5,5)
+beta = runif(1000,0.1,0.9)
+tau = runif(1000,0.1,2)
 
 parameters = data.frame(trials = trials,
            alpha = alpha,
