@@ -9,7 +9,7 @@ date: "2023-10-22"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm)
 
 ```
 
@@ -188,8 +188,11 @@ fit_model = function(parameters){
       max_treedepth = 12)
   
   #Extract parameters and diagnosics
+   
   
-  posteriors = as_draws_df(fit$summary()) %>% dplyr::filter(variable %in% names(parameters))
+  posteriors = as_draws_df(fit$summary(c("alpha","delta","beta","tau"))) 
+  
+  
   diag = data.frame(fit$diagnostic_summary(), id)
   
   data = posteriors %>% mutate(num_div = diag$num_divergent,
@@ -224,22 +227,24 @@ parameters = expand.grid(alpha = alpha,
                          replicate = replicate) %>% 
   mutate(id = 1:nrow(.))
 
+
 data_list <- split(parameters, parameters$id)
 
-load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
 ```
 
 
 Parallelizing the procedure to speed up the process!
 
 ```{r}
-#cores = availableCores()-1
-# 
-# plan(multisession, workers = 4)
-#  
-# possfit_model = possibly(.f = fit_model, otherwise = "Error")
-# 
-# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+cores = availableCores()-1
+ 
+plan(multisession, workers = cores)
+  
+possfit_model = possibly(.f = fit_model, otherwise = "Error")
+ 
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+hist(rnorm(100,0,1))
+
 load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
 ```
 
@@ -332,6 +337,56 @@ params %>%
   coord_cartesian(ylim = c(-1, 5), xlim = c(-1,5))+ theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 ```
 
+```{r}
+params %>% group_by(real_beta,real_delta,variable,real_alpha,real_tau,trials) %>% 
+  summarize(mean_abs_dif = abs(mean(mean-real_alpha))) %>%
+  filter(variable == "alpha") %>% 
+  ggplot(aes(y = real_beta, x = real_delta, fill = mean_abs_dif))+
+  geom_tile()+
+  facet_grid(real_tau~trials)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  ggtitle("Alpha")
+
+
+
+params %>% group_by(real_beta,real_delta,variable,real_alpha,real_tau,trials) %>% 
+  summarize(mean_abs_dif = abs(mean(mean-real_beta))) %>%
+  filter(variable == "beta") %>% 
+  ggplot(aes(y = real_alpha, x = real_delta, fill = mean_abs_dif))+
+  geom_tile()+
+  facet_grid(real_tau~trials)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  ggtitle("beta")
+
+
+
+params %>% group_by(real_beta,real_delta,variable,real_alpha,real_tau,trials) %>% 
+  summarize(mean_abs_dif = abs(mean(mean-real_delta))) %>%
+  filter(variable == "delta") %>% 
+  ggplot(aes(y = real_alpha, x = real_beta, fill = mean_abs_dif))+
+  geom_tile()+
+  facet_grid(real_tau~trials)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  ggtitle("delta")
+
+
+params %>% group_by(real_beta,real_delta,variable,real_alpha,real_tau,trials) %>% 
+  summarize(mean_abs_dif = abs(mean(mean-real_tau))) %>%
+  filter(variable == "tau") %>% 
+  ggplot(aes(y = real_alpha, x = real_beta, fill = mean_abs_dif))+
+  geom_tile()+
+  facet_grid(real_tau~trials)+
+  scale_fill_continuous(type = "viridis",)+
+  theme_classic()+
+  ggtitle("tau")
+
+```
+
+
+
 ## We can do better lets model this to see the interactions!!
 
 Lets start with the most obvious case of the drift rate! 
@@ -409,6 +464,104 @@ summary(model_gam)
 plot(ggeffects::ggpredict(model_gam, terms = c("real","real_beta","real_delta [-5:5]")))+
   geom_point()
 ```
+
+
+
+
+# Continous parameter recovery
+
+```{r}
+
+trials = round(runif(500,50,500),0)
+alpha = runif(500,0.2,7)
+delta = runif(500,-5,5)
+beta = runif(500,0.1,0.9)
+tau = runif(500,0.1,2)
+
+parameters = data.frame(trials = trials,
+           alpha = alpha,
+           delta = delta,
+           beta = beta,
+           tau = tau) %>% mutate(id = 1:nrow(.))
+
+
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+
+Parallelizing the procedure to speed up the process!
+
+```{r}
+# cores = availableCores()-1
+#  
+# plan(multisession, workers = cores)
+#   
+# possfit_model = possibly(.f = fit_model, otherwise = "Error")
+#  
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+# hist(rnorm(100,0,1))
+
+load(here::here("report","DDM","Workspace","DDM parameterrecovery_contin.RData"))
+```
+
+# Parameter recover results!
+
+We start with the models that caused errors if any.
+```{r}
+error_indices <- which(results == "Error")
+ 
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+```
+None! As expected but good to see
+
+
+Lets look at the divergences and max treedpeth of the models fit.
+```{r}
+divergence = map_dfr(results2, 2)
+
+divergence %>% median_qi(num_divergent)
+```
+There are also none which is good!
+
+# Visualizing Parameter recovery!
+
+```{r}
+params = map_dfr(results2,1)
+
+
+variables = c("alpha","delta","tau","beta")
+plots = list()
+for (variable1 in variables){
+  plot = params %>% filter(variable == variable1) %>% 
+    mutate(real = get(paste0("real_",variable1))) %>% 
+    ggplot(aes(x = mean, y = real, fill = trials))+
+    geom_point(alpha = 0.5,shape = 21)+
+    theme_classic()+
+    geom_abline(slope = 1, intercept = 0)+
+    xlab("Estimated")+
+    ylab("Simulated")+
+    ggtitle(variable1)+
+    theme(legend.position = "top")
+
+  plots[[variable1]] = plot
+}
+
+
+(plots[["alpha"]]+plots[["delta"]])/(plots[["tau"]]+plots[["beta"]])
+```
+
+
+
+
+
+
+
+
 
 
 
