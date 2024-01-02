@@ -559,7 +559,121 @@ for (variable1 in variables){
 
 
 
+## We can do better lets model this to see the interactions!!
 
+Lets start with the most obvious case of the drift rate! 
+Here we need to realize that both signs basically mean the same and from the plots above we see that they are identical we can therefore take the absolute value of real and estimated values!
+
+```{r}
+variables = "delta"
+
+
+m1 = params %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), trials = as.factor(trials)) %>% 
+    mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = trials) %>% 
+    mutate(Trial_number = as.numeric(Trial_number)) %>% 
+    mutate(real2 = abs(real2), mean = abs(mean)) %>% 
+  filter(variable == variables)
+
+
+model_gam = gamlss::gamlss(mean ~ real2+Trial_number,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2")))+
+  geom_point()
+```
+
+But this model doesn't really makes sense! It makes sense that the different simulated real values tightly correlate with the estimated values, but what do we make of the effect of Trial number?
+
+
+The effect of Trial number basically here states that as we simulate with more trials the estimated mean gets shrunk a bit. Which makes sense given the estimated means (especially in higher simulated (real) values)
+
+The right way to approach this, is to not model the mean of the normal distribution as trials increase but the standard deivation as trials increase:
+
+```{r}
+model_gam = gamlss::gamlss(mean ~ real2,
+                           sigma.formula = ~real2*Trial_number,
+                           data = m1)
+
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2")))+
+  geom_point()
+
+plot(ggeffects::ggpredict(model_gam, terms = c("Trial_number","real2"), what = "sigma"))+
+  geom_point()
+
+```
+
+What we see here is that generally as we increase trials by 1 we decrease the standard deviation by $exp(-0.198)$ which translates into `r round(1-exp(-0.198),3)` % decrease in the standard deviation.
+
+Now for the threshold parameter which was the trickiest to recover and depended heavily on the simulated value of both drift rate and starting bias!
+
+```{r, fig.height=7, fig.width=7}
+variables = "alpha"
+
+
+m1 = params %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), trials = as.factor(trials)) %>% 
+    mutate(across(all_of(contains("real_")), as.character)) %>% 
+    mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = trials) %>% 
+    mutate(Trial_number = as.numeric(Trial_number)) %>% 
+  filter(variable == variables)
+
+
+model_gam = gamlss::gamlss(mean ~ real2* real_beta * real_delta,
+                           sigma.formula = ~ real2 *Trial_number,
+                           data = m1)
+summary(model_gam)
+
+
+plot(ggeffects::ggpredict(model_gam, terms = c("real2","real_beta","real_delta [-5:5]")))+
+  geom_point()
+
+plot(ggeffects::ggpredict(model_gam, terms = c("Trial_number","real2"), what = "sigma"))+
+  geom_point()
+```
+
+
+
+```{r}
+
+variables = "alpha"
+
+
+m1 = params %>%
+    mutate(across(all_of(contains("real_")), as.factor)) %>% 
+    mutate(real = .[[paste0("real_", variables)]]) %>% 
+    mutate(real2 = as.numeric(as.character(real)), trials = as.factor(trials)) %>% 
+    mutate(across(all_of(contains("real_")), as.character)) %>% 
+    mutate(across(all_of(contains("real_")), as.numeric)) %>% 
+    rename(Trial_number = trials) %>% 
+    mutate(Trial_number = as.numeric(Trial_number)) %>% 
+  filter(variable == variables)
+
+
+model_gam = gamlss::gamlss(mean ~ real2* real_beta * real_delta,
+                           sigma.formula = ~ real2 *Trial_number*real_delta,
+                           data = m1)
+summary(model_gam)
+
+gamlss::Rsq(model_gam)
+
+
+gamlss::predictAll(model_gam, newdata = data.frame(Trial_number = 150,real2 = 2,real_beta = 0.5,real_delta = 2))
+gamlss::predictAll(model_gam, newdata = data.frame(Trial_number = 150,real2 = 2,real_beta = 0.5,real_delta = -2))
+
+```
 
 
 
