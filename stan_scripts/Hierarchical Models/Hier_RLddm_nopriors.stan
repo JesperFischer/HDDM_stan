@@ -108,7 +108,7 @@ model {
   
   target += normal_lpdf(gm[3] | 0, 1); //global mean for beta where its inv_logit transformed i.e. 0 here is 0.5 bias
   target += normal_lpdf(gm[4] | 0, 2); //global mean for the tau parameter also inv_logit transformed
-  target += normal_lpdf(gm[5] | -1, 1); //global mean for the tau parameter also inv_logit transformed
+  target += normal_lpdf(gm[5] | -1, 1); //global mean for the lr parameter also inv_logit transformed
   
   target += std_normal_lpdf(to_vector(z_expo));
   target += normal_lpdf(tau_u | 0, 2)-normal_lccdf(0 | 0, 2);
