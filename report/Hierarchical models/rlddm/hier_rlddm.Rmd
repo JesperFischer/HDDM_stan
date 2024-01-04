@@ -87,7 +87,7 @@ apply_rwiener <- function(index, n, alpha, delta, beta, tau, lr, linear) {
           tau = tau)
     
     expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
-    #respx[i] = rbinom(1,1,expectation[i])
+    #subj[i] = rbinom(1,1,expectation[i])
     
     resp = rbind(resp,resp1)
   }
@@ -655,63 +655,42 @@ fit <- mod$sample(
 }
 
 
-#trials = round(runif(100,50,500),0)
+trials = seq(50,100,by = 50)
 #trials = 100
-trials = sample(c(50,100,150,200),100, replace = T)
-
-subjects = round(runif(100,5,50),0)
+subjects = seq(5,10,by = 5)
 #subject = 10
 
-mu_alpha = runif(100,0.5,4)
+mu_alpha = seq(1,3,by = 1)
 #mu_alpha = c(2,3)
-sd_alpha = runif(100,0.5,2)
-#sd_alpha = 0.5
+sd_alpha = seq(1,2,by = 1)
+sd_alpha = 0.5
 
 
-mu_delta = runif(100,1,5)
+mu_delta = seq(1,3,by = 1)
 #mu_delta = c(2,3)
 
-sd_delta = runif(100,0.5,2)
+sd_delta = seq(1,3,by = 1)
+sd_delta = 0.5
 
+mu_beta = seq(0.4,0.6,by = 0.2)
+mu_beta = 0.5
+sd_beta = seq(0.1,0.2,by = 1)
+sd_beta = 0.2
+mu_tau = seq(0.3,0.4,by = 0.1)
+mu_tau = 0.3
 
-#mu_beta = seq(0.4,0.6,by = 0.2)
-#mu_beta = 0.5
-mu_beta = runif(100,0.3,0.7)
-sd_beta = runif(100,0.1,0.6)
+sd_tau = seq(0.1,0.2,by = 0.1)
+sd_tau = 0.1
 
-mu_tau = runif(100,0.1,0.5)
-sd_tau = runif(100,0.1,0.4)
-
-# mu_tau = seq(0.3,0.4,by = 0.1)
-# mu_tau = 0.3
-# 
-# sd_tau = seq(0.1,0.2,by = 0.1)
-# sd_tau = 0.1
-
-mu_lr = runif(100,-2,2)
+mu_lr = seq(-2,2,by = 1)
 #mu_lr = c(-2,1)
 
-sd_lr = runif(100,0.5,2)
+sd_lr = seq(0.5,1,by = 0.5)
+sd_lr = 0.5
 
 replicate = 1:1
 
-# parameters = expand.grid(mu_alpha = mu_alpha,
-#                          sd_alpha = sd_alpha,
-#                          mu_delta = mu_delta,
-#                          sd_delta = sd_delta,
-#                          mu_beta = mu_beta,
-#                          sd_beta = sd_beta,
-#                          mu_tau = mu_tau,
-#                          sd_tau = sd_tau,
-#                          mu_lr = mu_lr,
-#                          sd_lr = sd_lr,
-#                          subjects = subjects,
-#                          trials = trials,
-#                          replicate = replicate) %>% 
-#   mutate(id = 1:nrow(.))
-
-
-parameters = data.frame(mu_alpha = mu_alpha,
+parameters = expand.grid(mu_alpha = mu_alpha,
                          sd_alpha = sd_alpha,
                          mu_delta = mu_delta,
                          sd_delta = sd_delta,
@@ -726,10 +705,10 @@ parameters = data.frame(mu_alpha = mu_alpha,
                          replicate = replicate) %>% 
   mutate(id = 1:nrow(.))
 
+
 data_list <- split(parameters, parameters$id)
 
-test = fit_model(data_list[[62]])
-
+test = fit_model(data_list[[173]])
 ff = test[[1]]
 ```
 
@@ -765,15 +744,15 @@ results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options 
 # 
 # #results = c(results,results3)
 # 
-# load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play_real.RData")
-# 
-# error_indices <- which(results == "Error")
-# 
-# unique(error_indices)
-# 
-# results2 = results[results != "Error"]
-# 
-# divergence = purrr::map_dfr(results2,3)
+load("~/HDDM_stan/report/Hierarchical models/rlddm/parameter recovery/workspace/play_real.RData")
+
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+divergence = purrr::map_dfr(results2,3)
 
 divergence %>% median_qi(num_divergent)
 
@@ -839,9 +818,10 @@ plots_hist[["mu_lr"]]
 
 
 (plots_hist[["mu_tau"]]+plots_hist[["mu_beta"]])
+```
 
 
-
+```{r}
 histogram = T
 
 params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
@@ -873,7 +853,7 @@ params %>% mutate(variable = coalesce(replacements[variable], variable)) %>%
 params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
   filter(variable == "mu_lr") %>% 
       mutate(real = get(paste0("real_","mu_lr"))) %>% 
-  mutate(dif = mean-real) %>% 
+  mutate(dif = inv_logit_scaled(mean)-inv_logit_scaled(real)) %>% 
       ggplot(aes(x = dif))+
       {if(histogram)geom_histogram(alpha = 0.75, position = "identity", col = "black",bins = 30)}+
       {if(!histogram)geom_density(alpha = 0.75)}+
@@ -913,6 +893,66 @@ params %>% mutate(variable = coalesce(replacements[variable], variable)) %>%
 
 ```
 
+```{r}
+
+dd = params %>% mutate(variable = coalesce(replacements[variable], variable)) %>% 
+  filter(variable == "mu_lr") %>% 
+      mutate(real = get(paste0("real_","mu_lr"))) %>% 
+  mutate(mean = (inv_logit_scaled(mean)),
+         real = as.factor(inv_logit_scaled(real)),
+         real_sd_lr = as.factor(real_sd_lr)) %>% 
+  dplyr::select(trials, subjects, real, mean, real_mu_alpha, real_mu_delta,real_sd_lr)
+
+
+ss = gamlss::gamlss(mean ~ real,
+               sigma.formula = ~ real,
+               data = dd)
+
+summary(ss)
+
+ss = gamlss::gamlss(mean ~ trials+real,
+               sigma.formula = ~ trials+real,
+               data = dd)
+
+summary(ss)
+
+
+ss = gamlss::gamlss(mean ~ subjects+real,
+               sigma.formula = ~ subjects+real,
+               data = dd)
+
+summary(ss)
+
+
+ss = gamlss::gamlss(mean ~ trials*subjects*real_sd_lr+real,
+               sigma.formula = ~ trials*subjects*real*real_sd_lr,
+               data = dd)
+
+summary(ss)
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","trials","subjects","real_sd_lr")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()+
+  scale_x_continuous(breaks = seq(0,1,by = 0.2), labels = seq(0,1,by = 0.2))
+
+plot(ggeffects::ggpredict(ss, terms = c("trials","subjects","real","real_sd_lr"), what = "sigma"))
+
+
+
+
+gamlss::Rsq(ss)
+
+gamlss::predictAll(ss, newdata = data.frame(trials = 50,real_sd_lr = 1, real = 0.119202922022118, subjects = 10))
+gamlss::predictAll(ss, newdata = data.frame(trials = 50,real_sd_lr = 1, real = 0.3, subjects = 7))
+
+
+
+
+```
+
+
+
 
 
 ```{r}
@@ -928,14 +968,6 @@ subj %>% mutate(dif = mean-real_values) %>%
   facet_grid(trials~reals, scales = "free")+
   geom_abline(slope = 1, intercept = 0, col = "red")
 
-
-#try and fill with group mean of delta or something to see the influence of that
-subj %>% 
-  filter(grepl("alpha",variable)) %>% 
-  mutate(dif = mean-real_values) %>% 
-  ggplot(aes(x = dif))+
-  geom_histogram(col = "black")+
-  facet_grid(trials~reals, scales = "free")
 ```
 
 
@@ -989,6 +1021,119 @@ inner_join(subj %>% select(id, variable, mean, reals, real_values) %>%
     ggplot(aes(x = subj_mean, y = real_subj_values, col = real_mu_lr))+
     geom_point(alpha = 0.08)+
     facet_grid(trials~subjects, scales = "free")
+
+```
+
+
+
+```{r}
+dd = subj %>% 
+  dplyr::select(real_values, mean, trials)
+
+
+ss = gamlss::gamlss(mean ~ real_values,
+               sigma.formula = ~ real_values,
+               data = dd)
+
+summary(ss)
+
+ss = gamlss::gamlss(mean ~ trials+real_values,
+               sigma.formula = ~ trials+real_values,
+               data = dd)
+
+summary(ss)
+
+
+```
+
+
+```{r}
+
+dd = inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("alpha",subj_var)) %>% 
+    slice(seq(10, n(), by = 10)) %>% 
+    mutate(dif = subj_mean-real_subj_values)
+  
+
+
+ss = gamlss::gamlss(subj_mean ~ real_subj_values+trials*subjects+real_sd_alpha,
+               sigma.formula = ~ real_subj_values+trials*subjects*real_sd_alpha,
+               data = dd)
+
+summary(ss)
+
+
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real_subj_values","trials","subjects","real_sd_alpha")))
+
+
+plot(ggeffects::ggpredict(ss, terms = c("trials","subjects","real_subj_values","real_sd_alpha"), what = "sigma"))
+
+
+
+dd = inner_join(subj %>% select(id, variable, mean, reals, real_values) %>% 
+             rename(subj_var = variable, subj_mean = mean, real_subj = reals, real_subj_values = real_values),params, by = c("id"))%>% 
+  mutate(variable = coalesce(replacements[variable], variable)) %>% 
+    filter(grepl("lr",subj_var)) %>% 
+    slice(seq(10, n(), by = 10)) %>% 
+    mutate(dif = subj_mean-real_subj_values)
+  
+
+
+ss = gamlss::gamlss(subj_mean ~ real_subj_values+real_mu_lr+trials*subjects,
+               sigma.formula = ~ real_subj_values*trials*subjects*real_sd_lr,
+               data = dd)
+
+summary(ss)
+
+
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real_subj_values","trials","subjects","real_mu_lr")))
+
+
+plot(ggeffects::ggpredict(ss, terms = c("trials","subjects","real_subj_values","real_sd_lr"), what = "sigma"))
+
+```
+
+
+```{r}
+ss = gamlss::gamlss(mean ~ subjects+real,
+               sigma.formula = ~ subjects+real,
+               data = dd)
+
+summary(ss)
+
+
+ss = gamlss::gamlss(mean ~ trials*subjects*real_sd_lr+real,
+               sigma.formula = ~ trials*subjects*real_sd_lr+real,
+               data = dd)
+
+summary(ss)
+
+
+plot(ggeffects::ggpredict(ss, terms = c("real","trials","subjects","real_sd_lr")))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()+
+  scale_x_continuous(breaks = seq(0,1,by = 0.2), labels = seq(0,1,by = 0.2))
+
+plot(ggeffects::ggpredict(ss, terms = c("real","trials","subjects","real_sd_lr"), what = "sigma"))+
+  geom_abline(slope = 1, intercept = 0, linewidth = 1)+
+  geom_point()+  scale_x_continuous(breaks = seq(0,1,by = 0.2), labels = seq(0,1,by = 0.2))
+
+
+
+
+
+gamlss::Rsq(ss)
+
+gamlss::predictAll(ss, newdata = data.frame(trials = 50,real_sd_lr = 1, real = 0.119202922022118, subjects = 10))
+gamlss::predictAll(ss, newdata = data.frame(trials = 50,real_sd_lr = 1, real = 0.3, subjects = 7))
+
+
 
 ```
 

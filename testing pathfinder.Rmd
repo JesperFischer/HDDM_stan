@@ -1,0 +1,203 @@
+---
+title: "testing pathfinder"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr)
+
+```
+
+
+```{r}
+create_string <- function(i,n) {
+  result <- c()  # Initialize an empty character vector
+  
+  # Append strings to the vector
+  for (j in i:(1+i-n)) {
+    result <- c(result, paste0("expect[", j, "]"))
+  }
+  
+  return(result)
+}
+
+# Test the function with i = 5
+i <- 50
+result_string <- create_string(i,3)
+result_string
+
+
+
+
+
+fit_pathfinder = function(parameters){
+
+N = parameters$N
+lr = parameters$lr
+zeta = parameters$zeta
+e = array(NA,N+1)
+u = array(NA,N)
+r = array(NA,N)
+
+t_test = 2
+
+e[1] = 0.5
+u[1:t_test] = 1
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
+
+last_nn = parameters$last_nn
+
+for(i in 1:N){
+  if(i <= t_test){  
+    e[i+1] = e[i]+lr*(u[i]-e[i])
+    r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+    #i = i+1
+    next
+  }
+  
+
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   u = data.frame(u) %>% drop_na() %>% .$u,
+                   resp = data.frame(r) %>% drop_na() %>% .$r)
+  
+  fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  # fit_rl <- mod$sample(
+  #   data = data_stan,
+  #   chains = 4,
+  #   parallel_chains = 4,
+  #   adapt_delta = 0.9,
+  #   max_treedepth = 12,
+  #   refresh = 500
+  # )
+  
+  if(last_nn > i){
+    last_n = i
+  }else{
+    last_n = last_nn
+  }
+  mean_expect_lastn = mean(fit_rl$summary(create_string(i,last_n)) %>% .$mean)
+  if(mean_expect_lastn > 0.5){
+    u[i] = 0
+  }else{
+    u[i] = 1
+  }
+  
+  e[i+1] = e[i]+lr*(u[i]-e[i])
+  r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+  
+}
+
+  
+
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 u = data.frame(u) %>% drop_na() %>% .$u,
+                 resp = data.frame(r) %>% drop_na() %>% .$r)
+
+
+fit_rl <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+dd = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(last_n = last_nn,
+                                                      real_lr = lr,
+                                                      real_zeta = zeta,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(dd)
+
+}
+
+
+
+test = fit_pathfinder(parameters = data.frame(last_nn = 5,
+                                       lr = 0.2,
+                                       zeta = 9,
+                                       N = 60,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+N = 50
+
+last_nn = seq(1,20,by = 5)
+
+lr = seq(0.1,0.8, by = 0.1)
+
+zeta = seq(1,10,by = 5)
+
+replicate = 1:25
+
+
+params = expand.grid(N = N,
+                     lr = lr,
+                     zeta = zeta,
+                     last_nn = last_nn,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+#fit_pathfinder(data_list[[100]])
+
+# cores = availableCores()
+# 
+plan(multisession, workers = 3)
+# 
+# 
+possfit_model = possibly(.f = fit_pathfinder, otherwise = "Error")
+# 
+#possfit_model(data_list[[1]])
+#
+# 
+
+results <- future_map(data_list, ~possfit_model(.x),
+                       .progress = TRUE,
+                       .options = furrr_options(seed = TRUE))
+
+dd = map_dfr(results,rbind)
+```
+
+
+```{r, fig.height=7, fig.width=10}
+dd %>% filter(variable == "lr") %>% 
+  mutate(dif = mean-real_lr, q5 = q5-real_lr, q95 = q95-real_lr) %>% 
+  ggplot(aes(x = dif, fill = as.factor(real_zeta)))+
+  geom_histogram()+
+  facet_grid(last_n~real_lr, scales = "free")+ 
+  scale_x_continuous(lim = c(-0.3,0.3), breaks = seq(-0.3,0.3,by = 0.2),labels = seq(-0.3,0.3,by = 0.2))+
+  geom_vline(xintercept = 0)+theme_classic()+
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+
+
+dd %>% filter(variable == "lr") %>% mutate(dif = mean-real_lr, q5 = q5-real_lr, q95 = q95-real_lr) %>% 
+  ggplot(aes(x = real_lr, y = dif, fill = last_n))+
+  geom_pointrange(aes(ymin = q5, ymax = q95), shape = 21)
+
+
+dd  %>% filter(variable == "lr") %>% 
+  ggplot(aes(x = real_lr, y = sd, fill = last_n))+
+  geom_point(shape = 21, size = 4)+facet_grid(~real_zeta)
+
+dd  %>% filter(variable == "lr") %>%  mutate(dif = mean-real_lr, q5 = q5-real_lr, q95 = q95-real_lr) %>% 
+  ggplot(aes(x = real_lr, y = dif, fill = last_n))+
+  geom_point(shape = 21, size = 4)+facet_grid(~real_zeta)
+
+```
+

@@ -43,11 +43,13 @@ model {
   int c;
 
 
-  target += normal_lpdf(raw_tau | 0,1); //global mean of delta
-  target += normal_lpdf(raw_delta | 0,4); //global mean of delta evaluated on the log scale as we exponentitate it.
+  target += normal_lpdf(raw_tau | 0,1); //global mean for the tau parameter also inv_logit transformed
   
-  target += normal_lpdf(raw_alpha | log(3), 0.6); //global mean for beta where its inv_logit transformed i.e. 0 here is 0.5 bias
-  target += normal_lpdf(raw_beta | 0, 1); //global mean for the tau parameter also inv_logit transformed
+  target += normal_lpdf(raw_delta | 0,4); //global mean of delta evaluated on the real scale
+  
+  target += normal_lpdf(raw_alpha | log(3), 0.6); //global mean for beta where its on the log scale as we exponentitate it.
+
+  target += normal_lpdf(raw_beta | 0, 1); //global mean for the beta parameter also inv_logit transformed
   
 
     for(n in 1:trials){
