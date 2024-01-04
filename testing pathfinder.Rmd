@@ -9,10 +9,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr)
 
-```
-
-
-```{r}
 create_string <- function(i,n) {
   result <- c()  # Initialize an empty character vector
   
@@ -30,9 +26,10 @@ result_string <- create_string(i,3)
 result_string
 
 
+```
 
 
-
+```{r}
 fit_pathfinder = function(parameters){
 
 N = parameters$N
@@ -47,8 +44,13 @@ t_test = 2
 e[1] = 0.5
 u[1:t_test] = 1
 mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
-
 last_nn = parameters$last_nn
+threshhold = parameters$threshhold
+above_threshhold = parameters$above_threshhold 
+
+catch_trials = sample(1:N, parameters$n_catch, replace = F)
+
+parm_ev = data.frame()
 
 for(i in 1:N){
   if(i <= t_test){  
@@ -79,12 +81,25 @@ for(i in 1:N){
   }else{
     last_n = last_nn
   }
-  mean_expect_lastn = mean(fit_rl$summary(create_string(i,last_n)) %>% .$mean)
-  if(mean_expect_lastn > 0.5){
+  
+  
+  sum_expect_lastn_high = sum(fit_rl$summary(create_string(i,last_n)) %>% .$mean > threshhold)
+  sum_expect_lastn_low = sum(fit_rl$summary(create_string(i,last_n)) %>% .$mean < (1-threshhold))
+  
+  if(sum_expect_lastn_high >= above_threshhold){
     u[i] = 0
-  }else{
+  }else if(sum_expect_lastn_low >= above_threshhold){
     u[i] = 1
+  }else{
+    u[i] = u[i-1]
   }
+  if(i %in% catch_trials){
+    u[i] = 1-u[i]
+  }
+  
+  c_trial = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(parm_ev, c_trial)
   
   e[i+1] = e[i]+lr*(u[i]-e[i])
   r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
@@ -92,8 +107,6 @@ for(i in 1:N){
 }
 
   
-
-
 data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
                  u = data.frame(u) %>% drop_na() %>% .$u,
                  resp = data.frame(r) %>% drop_na() %>% .$r)
@@ -109,28 +122,85 @@ fit_rl <- mod$sample(
 )
 
 
-dd = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(last_n = last_nn,
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(u = u,
+                      e = e[1:N],
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+df_subj = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(last_n = last_nn,
                                                       real_lr = lr,
                                                       real_zeta = zeta,
                                                       trials = N,
                                                       id = parameters$id,
                                                       replicate = parameters$replicate)
 
-return(dd)
-
+return(list(df_subj,df_trial,catch_trials))
 }
 
+real_lr = 0.1
+real_zeta = 5
 
-
-test = fit_pathfinder(parameters = data.frame(last_nn = 5,
-                                       lr = 0.2,
-                                       zeta = 9,
-                                       N = 60,
+test = fit_pathfinder(parameters = data.frame(last_nn = 2,
+                                       lr = real_lr,
+                                       n_catch = 10,
+                                       threshhold = 0.8,
+                                       above_threshhold = 2,
+                                       zeta = real_zeta,
+                                       N = 50,
                                        id = 1,
                                        replicate = 1))
 
 
 
+test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u))+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+  geom_abline(intercept = real_lr, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "lr"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+  geom_abline(intercept = real_zeta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "zeta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+real_lr = 0.4
+real_zeta = 10
+
+test = fit_pathfinder(parameters = data.frame(last_nn = 3,
+                                       lr = real_lr,
+                                       n_catch = 10,
+                                       threshhold = 0.8,
+                                       above_threshhold = 3,
+                                       zeta = real_zeta,
+                                       N = 100,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u))+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+  geom_abline(intercept = real_lr, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "lr"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+  geom_abline(intercept = real_zeta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "zeta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+```
+
+
+```{r}
 N = 50
 
 last_nn = seq(1,20,by = 5)

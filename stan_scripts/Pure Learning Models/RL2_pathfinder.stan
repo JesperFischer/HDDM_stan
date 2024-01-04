@@ -51,9 +51,9 @@ transformed parameters{
 model {
   
   
-  target += beta_proportion_lpdf(lr | 0.5,5);
+  target += beta_proportion_lpdf(lr | 0.3,5);
   
-  target += normal_lpdf(zeta | 1, 10)-normal_lccdf(0 | 1, 10);
+  target += normal_lpdf(zeta | 1, 20)-normal_lccdf(0 | 1, 20);
   
     
   for(i in 1:trials){
