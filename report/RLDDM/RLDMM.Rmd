@@ -26,12 +26,27 @@ pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstan
 
 ## RLDMM
 
-Looking at incorporating reinforcement learning! The basic idea being that the learning about the contingency space (U) influences the drift rate of the weiner distribution. So in an experimental setting this would amount to the participant having heard a cue and then having to predict the next stimulus. If the participant is very certain that the cue is associated with a particular stimulus then he/she will respond faster (higher absolute drift rate) compared to if very uncertain. The sign is also important so the drift rate is said to follow the following:
+Looking at incorporating reinforcement learning! The basic idea being that the learning about the some association (U) influences the drift rate of the wiener distribution. This association could for instance be an association between a neutral cue and an upcoming stimulus (because of perceptual learning). The basic idea is then to have the cues being association with a particular simulus with a probability. In the simplest case this would mean having one neutral cue (say a tone) being associated with a warm stimulus. The association probability could then be deterministic (i.e. tone -> stimulus) or probabilistic such that in only a fraction of trials the tone will give the stimulus. To complicate the experimental procedure for the participants one could change this probability as trials progressed, making participants' have to update their expectations on the fly and evaluate whether a trial is just random noise or a change in cue-stimulus association structure! 
+
+One can of cause also add more cue-stimulus associations, to include more and more diverse stimuli.
+
+For the case of the following simulations this distinction does not make a difference as the input of the participant is just going to be either 0 or 1, but for incorporating perception the quality of the stimulus is essential.
+
+Here i think of the inputs U as two cues and two stimuli that are coded as either 1 or 0 depending on which of the cues are associated with what stimuli. The underlying probabilistic structure is then which cue is most strongly associated with what stimulus (again here doesn't really make a difference)
+
+
+The main idea to keep track off here for the modeling is the following:
+
+Participants learn about the cue-stimulus association by reinforcement learning (Q-learning).
+$$
+E_{i+1} = E_{i}+lr*(U_i-E_{i})
+$$
+This expectation can be thought of as the belief of the participant towards either of the here two outcome (0 | 1). If the participant is very certain that the cue is associated with a particular stimulus then he/she will respond faster (higher absolute drift rate) compared to if very uncertain ($E_i$ close to either 0 or 1). The sign of the trialeise drift rate is also important as expectations close to 0 should lead to more 0 reponses and vice versa. Normally the trial-wise drift rate is said to follow the following equation:
 $$
 \delta_i = (E_i-(1-E_i))*\delta_s
 $$
 
-where $\delta_i$ is the drift rate on the given trial and $\delta_s$ is the subject specific parameter that determines how much the expectation influences the reaction times (drift rates). An example could be that the expectation is 0.2 we get $0.2-(1-0.2) = 0.2-0.8 = -0.6$ or when the expectation is 0.8 we get $0.8-(1-0.8) = 0.8-0.2 = 0.6$ The sign therefore makes sense: Lets simulate and see how it looks:
+where $\delta_i$ is the drift rate on the given trial and $\delta_s$ is the subject specific parameter that determines how much the expectation influences the reaction times. An example could be that the expectation is 0.2 we get $0.2-(1-0.2) = 0.2-0.8 = -0.6$ or when the expectation is 0.8 we get $0.8-(1-0.8) = 0.8-0.2 = 0.6$ The sign therefore makes sense: Lets simulate and see how it looks:
 
 
 # linear ddm

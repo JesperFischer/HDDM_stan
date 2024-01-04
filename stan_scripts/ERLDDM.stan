@@ -15,14 +15,9 @@ data {
   real minRT;                        // minimum RT of the observed data
   vector[trials] RT;
   
-  int<lower = 0, upper = 1> run_estimation; // a switch to evaluate the likelihood
-  
   vector[trials] u;
   
   array[trials+1] int resp;
-  
-  int<lower = 0, upper = 1> linear; // a switch to evaluate the likelihood
-  
   
   array[trials] real stim;
   array[trials] int cue;
@@ -33,33 +28,30 @@ data {
 }
 
 parameters {
-  // parameters of the DDM (parameter names in Ratcliffs DDM), from https://github.com/gbiele/stan_wiener_test/blob/master/stan_wiener_test.R
-  // also see: https://groups.google.com/forum///!searchin/stan-users/wiener%7Csort:relevance/stan-users/-6wJfA-t2cQ/Q8HS-DXgBgAJ
-  // alpha (a): Boundary separation or Speed-accuracy trade-off (high alpha means high accuracy). alpha > 0
-  // beta (b): Initial bias Bias for either response (beta > 0.5 means bias towards "upper" response 'A'). 0 < beta < 1
-  // delta (v): Drift rate Quality of the stimulus (delta close to 0 means ambiguous stimulus or weak ability). 0 < delta
-  // tau (ter): Nondecision time + Motor response time + encoding time (high means slow encoding, execution). 0 < ter (in seconds)
-  ///* upper boundary of tau must be smaller than minimum RT
-  //to avoid zero likelihood for fast responses.
-  //tau can for physiological reasone not be faster than 0.1 s.*/
+
 
   real<lower=0, upper=10> alpha;  // boundary separation
   real<lower=0, upper=1> beta;   // initial bias
   real delta;  // drift rate
   real tau_raw;  // nondecision time
   real <lower =0, upper = 1> lr;
-  real <lower =0, upper = 1> nu;
+  real  nu;
   real <lower =0> prec_per;
+  real  sens_w;
+  real  sens_c;
+  
   
   
 }
 
 transformed parameters{
-  array[trials+1] real expect;
+  array[trials+1] real<lower =0, upper =1> expect;
   array[trials] real uncert;
-  array[trials] real belief_to_cold;
+  array[trials] real<lower =0, upper =1> belief_to_cold;
   array[trials] real deltat;
-  array[trials] real mu_per;
+  array[trials] real<lower =0, upper =1> mu_per;
+  
+  
   
   
   real tau = inv_logit(tau_raw) * minRT; // non-decision time at RT scale
@@ -72,8 +64,15 @@ transformed parameters{
     else
       belief_to_cold[i] = 1-expect[i];
 
+    if(stim[i] == 1){
 
-    mu_per[i] = (1-nu)*stim[i]+nu*belief_to_cold[i];
+      mu_per[i] = inv_logit(sens_c+((1-nu)*stim[i]+nu*(belief_to_cold[i]-0.5)));
+    
+    }else{
+      mu_per[i] = inv_logit(sens_w+(-((1-nu)*(-stim[i])+nu*(belief_to_cold[i]-0.5))));
+    
+    }
+    
     
     uncert[i] = expect[i] - (1 - expect[i]);
 
@@ -94,21 +93,21 @@ model {
   
   target += beta_proportion_lpdf(beta | 0.5, 10);
   
-  if(linear){
    target += normal_lpdf(delta | 0, 20);
-  }else if(!linear){
-   target += normal_lpdf(delta | 0, 20);
-  }
+
   
   target += normal_lpdf(tau_raw | 0,1);
   
   target += lognormal_lpdf(prec_per | log(10),1);
   
-  target += beta_proportion_lpdf(nu | 0.2,5);
+  target += normal_lpdf(nu | 0,5);
+  
+  target += normal_lpdf(sens_c | 0,5);
+  
+  target += normal_lpdf(sens_w | 0,5);
   
   
-  
-  if(run_estimation==1){
+
     
     for(i in 1:trials){
       c = resp[i];
@@ -119,7 +118,7 @@ model {
         target += wiener_lpdf(RT[i] | alpha, tau, 1-beta, -deltat[i]);
         }
     }
-  }
+
 }
 
 generated quantities{
@@ -134,6 +133,9 @@ generated quantities{
   real prior_tau_raw;
   real prior_prec_per;
   real prior_nu;
+  real prior_sens_w;
+  real prior_sens_c;
+  
   int c;
   
   vector[trials] pred_percept;
@@ -141,7 +143,9 @@ generated quantities{
   
   
   prior_prec_per = lognormal_rng(log(10),1);
-  prior_nu = beta_proportion_rng(0.2,5);
+  prior_nu = normal_rng(0,5);
+  prior_sens_w = normal_rng(0,5);
+  prior_sens_c = normal_rng(0,5);
   
   prior_lr = beta_proportion_rng(0.3,5);
   
@@ -150,11 +154,8 @@ generated quantities{
   prior_beta = beta_proportion_rng(0.5,10);
   
   
-  if(linear){
-   prior_delta = normal_rng(0, 20);
-  }else if(!linear){
-   prior_delta = normal_rng(0, 20);
-  }
+  prior_delta = normal_rng(0, 20);
+
   prior_tau_raw = normal_rng(0,1);
   
   prior_tau = inv_logit(prior_tau_raw) * minRT;

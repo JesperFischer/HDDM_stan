@@ -1,0 +1,457 @@
+---
+title: "hier_rlddm"
+output: html_document
+date: "2023-11-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,RWiener)
+
+```
+
+## R Markdown
+
+
+
+
+```{r}
+trials = 100
+subjects = 10
+
+mu_alpha = 3
+sd_alpha = 1
+
+mu_delta = 3
+sd_delta = 1
+
+mu_beta = 0.5
+sd_beta = 0.5
+
+mu_tau = 0.3
+sd_tau = 0.1
+
+mu_lr = -1
+sd_lr = 1
+
+mu_nu = 1
+sd_nu = 0.5
+
+mu_sens_w = 0
+sd_sens_w = 0.2
+
+
+mu_sens_c = 0
+sd_sens_c = 0.2
+
+mu_prec_per = 10
+sd_prec_per = 1
+
+
+
+trials = rep(trials,subjects)
+
+alphas = truncnorm::rtruncnorm(subjects,0,Inf,mu_alpha, sd_alpha)
+deltas = rnorm(subjects,mu_delta, sd_delta)
+betas = brms::inv_logit_scaled(rnorm(subjects,mu_beta, sd_beta))
+taus = brms::inv_logit_scaled(rnorm(subjects,mu_tau, sd_tau))
+lr = brms::inv_logit_scaled(rnorm(subjects,mu_lr,sd_lr))
+nu = rnorm(subjects,mu_nu,sd_nu)
+sens_w = rnorm(subjects,mu_sens_w,sd_sens_w)
+sens_c = rnorm(subjects,mu_sens_c,sd_sens_c)
+
+prec_per = truncnorm::rtruncnorm(subjects,0,Inf,mu_prec_per, sd_prec_per)
+
+
+  
+apply_rwiener <- function(index, n, alpha, delta, beta, tau, lr, nu, sens_w, sens_c, prec_per) {
+  
+  set.seed(123)
+  N = n
+
+  u = c()
+  for(i in 1:(N/100)){
+    u1 = c(rbinom(25,1,0.8),rbinom(25,1,0.2),rbinom(25,1,0.8),rbinom(25,1,0.5))
+    u = c(u,u1)
+  }
+  
+  N = length(u)
+  
+  
+  stim = rbinom(N,1,0.5)
+  cue = ifelse(stim == u, 1,0)
+  
+  stim2 = ifelse(stim == 1, "cold","warm")
+  cue2 = ifelse(cue == 1, "high-tone","low-tone")
+  
+  
+  e0 = 0.5
+  expectation = array(NA, n+1)
+  
+  uncertainty = array(NA, n)
+  belief_to_stim_cold = array(NA, n)
+  mu_per = array(NA, n)
+  percept= array(NA, n)
+  respx = array(NA, n+1)
+  expectation[1] = e0
+  
+
+  resp = data.frame()
+  for(i in 1:n){
+   
+    belief_to_stim_cold[i] = ifelse(cue[i] == 1, expectation[i], 1-expectation[i])
+    
+    if(stim[i] == 1){ #1 is cold -1 is warm
+      mu_per[i] = brms::inv_logit_scaled(sens_c+((1-nu)*stim[i]+nu*(belief_to_stim_cold[i]-0.5)))
+    }else{
+      mu_per[i] = brms::inv_logit_scaled(sens_w+(-((1-nu)*(-stim[i])+nu*(belief_to_stim_cold[i]-0.5))))
+    }
+    
+    percept[i] = extraDistr::rprop(1, prec_per, mu_per[i])
+    
+    uncertainty[i] = (expectation[i]-(1-expectation[i]))*delta
+    
+    
+    resp1 = rwiener(n = 1,
+          alpha = alpha,
+          delta = uncertainty[i],
+          beta = beta,
+          tau = tau)
+    
+    expectation[i+1] = expectation[i]+lr*(u[i]-expectation[i])
+
+    resp = rbind(resp,resp1)
+  }
+
+  resp$stim2 = stim2
+  resp$stim = stim
+  resp$cue2 = cue2
+  resp$cue = cue
+  resp$percept = percept
+  
+  resp$belief_to_stim_cold = belief_to_stim_cold
+  
+  resp$u = u
+  resp$expectation = expectation[1:n]
+  resp$uncertainty = uncertainty[1:n]
+  
+  resp$trial = 1:n
+  
+  
+  resp$lr = lr
+  resp$alpha = alpha
+  resp$beta = beta
+  resp$tau = tau
+  resp$delta = delta
+  resp$nu = nu
+  resp$prec_per = prec_per
+  resp$sens_w = sens_w
+  resp$sens_c = sens_c
+  
+  
+  resp$index = index
+  
+  return(resp)
+}
+
+apply_rwiener(index = 1, 
+              n = trials[1],
+              alpha = alphas[1],
+              delta = deltas[1], 
+              beta = betas[1],
+              tau = taus[1],
+              lr = lr[1],
+              nu = nu[1],
+              sens_w = sens_w[1],
+              sens_c = sens_c[1],
+              prec_per = prec_per[1])
+```
+
+
+```{r}
+# Applying the function to each element of the vectors
+
+results_list <- mapply(apply_rwiener,
+                       index = 1:length(trials), 
+                       n = trials,
+                       alpha = alphas,
+                       delta = deltas, 
+                       beta = betas,
+                       tau = taus,
+                       lr = lr,
+                       nu = nu,
+                       sens_w = sens_w,
+                       sens_c = sens_c,
+                       prec_per = prec_per,
+                       SIMPLIFY = FALSE)
+
+
+
+
+
+#getting the results in a dataframe
+result_df <- do.call(rbind, results_list)
+
+
+result_df %>% ggplot(aes(x = trial, y = expectation))+geom_line()+facet_wrap(~index)+theme_classic()
+
+result_df %>% ggplot(aes(x = expectation, y = q))+geom_point()+facet_wrap(~index, scales = "free")+theme_classic()
+
+
+result_df %>% ggplot(aes(x = belief_to_stim_cold, y = percept, col = stim2))+geom_point()+geom_smooth()+facet_wrap(~index, scales = "free")+theme_classic()
+```
+
+
+
+```{r}
+
+result_df$n = 1:nrow(result_df)
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Hierarchical Models","Hier_ERLddm.stan"))
+
+data_stan = list(trials = nrow(result_df),
+                S = length(unique(result_df$index)),
+                S_id = result_df$index,
+                u = result_df$u,
+                stim = result_df$cue,
+                cue = result_df$stim,
+                percept = result_df$percept,
+                trial_per_par = result_df %>% group_by(index) %>% filter(trial == 1) %>% .$n,
+                minRT = result_df %>% group_by(index) %>% summarize(minrt = min(q)) %>% .$minrt,
+                RT = result_df$q,
+                resp = result_df %>% .$resp
+)
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    refresh = 50,
+    max_treedepth = 12,
+    init = 0)
+
+
+
+
+replacements <- c("gm[1]" = "mu_delta",
+                "gm[2]" = "mu_alpha",
+                "gm[3]" = "mu_beta",
+                "gm[4]" = "mu_tau",
+                "gm[5]" = "mu_lr",
+                "gm[6]" = "mu_nu",
+                "gm[7]" = "mu_sens_w",
+                "gm[8]" = "mu_sens_c",
+                "gm[9]" = "mu_prec_per",
+                
+                "tau_u[1]" = "sd_delta",
+                "tau_u[2]" = "sd_alpha",
+                "tau_u[3]" = "sd_beta",
+                "tau_u[4]" = "sd_tau",
+                "tau_u[5]" = "sd_lr",
+                "tau_u[6]" = "sd_nu",
+                "tau_u[7]" = "sd_sens_w",
+                "tau_u[8]" = "sd_sens_c",
+                "tau_u[9]" = "sd_prec_per"
+                )
+```
+
+Lets look at the summary of the model
+Note that:
+1 is delta
+2 is log(alpha)
+3 is logit(beta)
+4 is logit(tau)/min(RT)
+5 is lr
+
+```{r}
+flextable::flextable(as_draws_df(fit$summary()) %>% mutate(variable = case_when(
+    variable %in% names(replacements) ~ replacements[variable],
+    TRUE ~ variable
+  )) %>% mutate_if(is.numeric, round, digits = 2) %>% head(19))
+```
+
+
+```{r}
+variables = c("gm[1]","gm[2]","gm[3]","gm[4]","gm[5]","gm[6]","gm[7]","gm[8]","gm[9]",
+               "tau_u[1]","tau_u[2]","tau_u[3]","tau_u[4]","tau_u[5]","tau_u[6]","tau_u[7]","tau_u[8]","tau_u[9]")
+
+
+
+posteriors = as_draws_df(fit$draws(variables = variables)) %>% 
+  select(variables) %>% 
+  pivot_longer(everything())%>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+priors = as_draws_df(fit$draws(variables = prior_variables)) %>% 
+  select(prior_variables) %>% 
+  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
+  mutate(name = gsub("prior_","",name))
+
+
+rbind(priors,posteriors) %>%
+  mutate(name = case_when(
+    name %in% names(replacements) ~ replacements[name],
+    TRUE ~ name
+  )) %>% 
+  ggplot(aes(x = value, fill = posterior))+
+  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
+  facet_wrap(~name, scales = "free", ncol = 4)+
+  theme_classic()
+
+
+## make it ready to combine with single subject fits:
+
+test = rbind(priors,posteriors) %>%
+  mutate(name = case_when(
+    name %in% names(replacements) ~ replacements[name],
+    TRUE ~ name),
+    variable = substr(name, 4, nchar(name)),
+    ID = NA)
+
+```
+
+
+```{r, fig.height=7,fig.width=10}
+source(here::here("report","Hierarchical models","ddm","scripts","plots.R"))
+
+variables = c("tau","alpha","delta","beta","lr","nu","sens_w","sens_c","prec_per")
+
+
+posteriors = as_draws_df(fit$draws(variables = variables)) %>% 
+  select(contains(variables)) %>% mutate(posterior = T)
+
+prior_variables = paste0("prior_",variables)
+
+priors = as_draws_df(fit$draws(variables = prior_variables)) %>% 
+  select(-c(.chain,.iteration,.draw)) %>% mutate(posterior = F) %>% 
+  rename_all(~sub("^prior_", "", .))
+
+
+
+#Density plot
+rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+  mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+  rbind(.,test) %>% 
+  ggplot(aes(x = value, y = name, fill = posterior))+
+    geom_density_ridges() + 
+    theme_ridges()+ylab("ID's")+
+  facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(4, scale_x_continuous(limits = c(0, 1))),
+    scale_override(5, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(6, scale_x_continuous(limits = c(0, 20))),
+    scale_override(7, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(8, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(9, scale_x_continuous(limits = c(0, 1)))
+  ))
+
+
+
+# Histogram
+rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+  mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+  rbind(.,test) %>% 
+  ggplot(aes(x = value, y = name, fill = posterior))+
+  geom_density_ridges(stat = "binline", bins = 50, scale = 0.95, draw_baseline = FALSE)+
+    theme_ridges()+ylab("ID's")+
+  facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(4, scale_x_continuous(limits = c(0, 1))),
+    scale_override(5, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(6, scale_x_continuous(limits = c(0, 20))),
+    scale_override(7, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(8, scale_x_continuous(limits = c(-10, 10))),
+    scale_override(9, scale_x_continuous(limits = c(0, 1)))
+  ))
+```
+
+
+
+```{r, fig.height=7,fig.width=10}
+variables = c("tau","alpha","delta","beta","lr","nu","sens_w","sens_c","prec_per")
+
+plot_list <- list()
+
+for(variable1 in variables){
+  
+  
+  global_estimates = data.frame(ID = NA,
+                                name = c(paste0("mu_",variable1), paste0("sd_",variable1)),
+                                value = c(get(paste0("mu_",variable1)), get(paste0("sd_",variable1))),
+                                variable = variable1,
+                                posterior = NA)
+
+  
+  real_data = result_df %>% select(all_of(c(variables,"index"))) %>% 
+    pivot_longer(cols = variables, names_to = "variable") %>%
+    rename(ID = index) %>% 
+    distinct() %>% 
+    mutate(name = paste(variable, "[", ID, "]", sep = ""), posterior = NA) %>% 
+    filter(variable == variable1) %>% 
+    rbind(., global_estimates)%>%
+    mutate(value = ifelse(name == "mu_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "mu_lr", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_lr", inv_logit_scaled(value), value)
+           )
+    
+  
+  
+plotdata = rbind(posteriors,priors) %>% pivot_longer(starts_with(variables))  %>% 
+    mutate(variable = sub("\\[\\d+\\]", "", name), ID = as.numeric(sub(".*\\[(\\d+)\\]", "\\1", name))) %>% 
+    rbind(.,test) %>% 
+    filter(variable == variable1) %>%
+    mutate(value = ifelse(name == "mu_alpha", exp(value), value),
+           value = ifelse(name == "sd_alpha", exp(value), value),
+           value = ifelse(name == "mu_prec_per", exp(value), value),
+           value = ifelse(name == "sd_prec_per", exp(value), value),
+           value = ifelse(name == "mu_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_tau", inv_logit_scaled(value), value),
+           value = ifelse(name == "mu_lr", inv_logit_scaled(value), value),
+           value = ifelse(name == "sd_lr", inv_logit_scaled(value), value)
+           )
+  
+    
+  plot_list[[variable1]] = plotdata %>% ggplot(aes(x = value, y = name,fill = posterior))+
+      geom_density_ridges() + 
+      theme_ridges()+
+    geom_segment(data = real_data, aes(x = value, xend = value, y = as.numeric(as.factor(name)),yend =  as.numeric(as.factor(name))+0.9), alpha = 0.5, linetype = 2, linewidth = 1.2)+
+      {if(variable1 == "alpha")scale_x_continuous(lim = c(0,10))}+
+      {if(variable1 == "tau")scale_x_continuous(lim = c(0,1))}+
+      {if(variable1 == "delta")scale_x_continuous(lim = c(-10,10))}+
+      {if(variable1 == "beta")scale_x_continuous(lim = c(0,1))}+
+      {if(variable1 == "nu")scale_x_continuous(lim = c(-2,2))}+
+      {if(variable1 == "sens_w")scale_x_continuous(lim = c(-2,2))}+
+      {if(variable1 == "sens_c")scale_x_continuous(lim = c(-2,2))}+
+      {if(variable1 == "prec_per")scale_x_continuous(lim = c(0,20))}+
+      
+      ylab("ID's")
+  
+    # facet_wrap_custom(~variable, scales = "free", scale_overrides = list(
+    #   scale_override(1, scale_x_continuous(limits = c(0, 10))),
+    #   scale_override(2, scale_x_continuous(limits = c(0, 1))),
+    #   scale_override(3, scale_x_continuous(limits = c(-10, 10))),
+    #   scale_override(4, scale_x_continuous(limits = c(0, 1)))
+    # ))
+  
+}
+
+
+# Create a 2x2 matrix layout
+library(patchwork)
+((plot_list[["alpha"]]+plot_list[["delta"]])/
+(plot_list[["tau"]]+plot_list[["beta"]]))/plot_list[["lr"]]+plot_layout(guides = "collect")
+
+
+((plot_list[["nu"]]+plot_list[["sens_w"]])/
+(plot_list[["sens_c"]]+plot_list[["prec_per"]]))+plot_layout(guides = "collect")
+
+```
+

@@ -18,7 +18,7 @@ pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstan
 ```{r ERLDMM}
 agent_expect = function(parameters){
   
-  N = 400
+  N = 200
   
   u = c()
   for(i in 1:(N/100)){
@@ -28,6 +28,8 @@ agent_expect = function(parameters){
 
   N = length(u)
   
+  sens_c = parameters$sens_c
+  sens_w = parameters$sens_w
   
   stim = rbinom(N,1,0.5)
   cue = ifelse(stim == u, 1,0)
@@ -35,7 +37,6 @@ agent_expect = function(parameters){
   stim2 = ifelse(stim == 1, "cold","warm")
   cue2 = ifelse(cue == 1, "high-tone","low-tone")
   
-  stim = ifelse(stim == 1, 0.8, 0.2)
   
   alpha = parameters$alpha
   delta = parameters$delta
@@ -62,7 +63,11 @@ agent_expect = function(parameters){
     
     belief_to_stim_cold[i] = ifelse(cue[i] == 1, expectation[i], 1-expectation[i])
     
-    mu_per[i] = (1-nu)*stim[i]+nu*belief_to_stim_cold[i]
+    if(stim[i] == 1){ #1 is cold -1 is warm
+      mu_per[i] = brms::inv_logit_scaled(sens_c+((1-nu)*stim[i]+nu*(belief_to_stim_cold[i]-0.5)))
+    }else{
+      mu_per[i] = brms::inv_logit_scaled(sens_w+(-((1-nu)*(-stim[i])+nu*(belief_to_stim_cold[i]-0.5))))
+    }
     
     percept[i] = extraDistr::rprop(1, prec_per, mu_per[i])
     
@@ -92,19 +97,21 @@ agent_expect = function(parameters){
   
   resp = resp %>% mutate(resp2 = ifelse(resp == "upper",1,0))
   
-  resp = resp %>% mutate(correct = ifelse(real_resp == u, 1, 0))
+  resp = resp %>% mutate(correct = ifelse(resp2 == u, 1, 0))
   
-  resp$percept = ifelse(percept < 0.001, 0.001, ifelse(percept > 0.999, 0.999, percept))
+  #resp$percept = ifelse(percept < 0.001, 0.001, ifelse(percept > 0.999, 0.999, percept))
+  
+  resp$percept = percept
   
   resp$belief_to_stim_cold = belief_to_stim_cold
   
-  resp$stim = stim2
+  resp$stim = stim
   
-  resp$cue = cue2
+  resp$cue = cue
   
-  resp$stim2 = stim
+  resp$stim2 = stim2
   
-  resp$cue2 = cue
+  resp$cue2 = cue2
   
   
   resp$lr = lr
@@ -114,6 +121,9 @@ agent_expect = function(parameters){
   resp$delta = delta
   resp$nu = nu
   resp$prec_per = prec_per
+  resp$sens_w = sens_w
+  resp$sens_c = sens_c
+  
 
   
   return(resp)
@@ -127,17 +137,24 @@ resp = agent_expect(parameters = data.frame(
                               lr = 0.2,
                               delta = 2,
                               beta = 0.5,
+                              sens_c = 1,
+                              sens_w = 1,
                               tau = 0.1,
                               e0 = 0.5,
-                              zeta = 3,
-                              nu = 0.2,
-                              prec_per = 10,
+                              nu = 1,
+                              prec_per = 20,
                               id = 2))
 
 resp %>% 
-  ggplot(aes(x = belief_to_stim_cold, y = percept, col = as.factor(stim)))+
+  ggplot(aes(x = belief_to_stim_cold, y = percept, col = stim2))+
   geom_point()+
   geom_smooth(method = "lm")
+
+resp %>% 
+  ggplot(aes(x = expectation, y = percept, col = stim2))+
+  geom_point()+
+  geom_smooth(method = "lm")
+
 
 resp %>% ggplot(aes(x = expectation, y = q))+
   geom_point()+
@@ -159,14 +176,12 @@ resp %>% ggplot()+
 ```{r}
 
 data_stan = list(RT = resp %>% .$q,
-                 stim = resp %>% .$stim2,
-                 cue = resp %>% .$cue2,
+                 stim = resp %>% .$stim,
+                 cue = resp %>% .$cue,
                  percept = resp %>% .$percept,
                  minRT = min(resp$q),
-                 run_estimation = 1,
                  trials = nrow(resp),
                  u = resp$u,
-                 linear = T,
                  resp = c(resp$resp2,0))
 
 
@@ -187,10 +202,10 @@ fit1 <- mod$sample(
 
 
 
-variables = c("delta","lr","alpha","beta","tau","nu","prec_per")
-mcmc_pairs(fit1$draws(variables = variables),
-           np = nuts_params(fit1), pars = variables,
-           off_diag_args = list(size = 0.75))
+variables = c("delta","lr","alpha","beta","tau","nu","prec_per","sens_w","sens_c")
+# mcmc_pairs(fit1$draws(variables = variables),
+#            np = nuts_params(fit1), pars = variables,
+#            off_diag_args = list(size = 0.75))
 
 mcmc_trace(fit1$draws(variables = variables))+
   theme_classic()
@@ -201,12 +216,12 @@ mcmc_trace(fit1$draws(variables = variables))+
 ```{r}
 flextable::flextable(data.frame(fit1$summary()) %>% 
                        mutate_if(is.numeric, round, digits = 2) %>% 
-                       head(8))
+                       head(10))
 ```
 
 
 ```{r}
-variables = c("delta","lr","alpha","beta","tau","nu","prec_per")
+variables = c("delta","lr","alpha","beta","tau","nu","prec_per","sens_w","sens_c")
 posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
   select(variables) %>% 
   pivot_longer(everything())%>% mutate(posterior = T)
@@ -276,7 +291,7 @@ df %>% rowwise() %>% mutate(predictedRT = RWiener::rwiener(1,alpha,tau,beta,delt
   geom_smooth()
 ```
 
-```{r}
+```{r rt pp}
 library(posterior)
 
 n_check = 25
@@ -318,64 +333,82 @@ rts %>% ggplot()+
   geom_density(aes(x = predictedRT, group = draw),col = "lightblue")+
   geom_density(data = resp, aes(x = q),col = "red")+
   theme_classic()
-```
-
-```{r}
-
-variables = c("delta","lr","alpha","beta","tau")
-posteriors = as_draws_df(fit1$draws(variables = variables)) %>% 
-  select(variables) %>% 
-  pivot_longer(everything())%>% mutate(posterior = T)
-
-prior_variables = paste0("prior_",variables)
-priors = as_draws_df(fit1$draws(variables = prior_variables)) %>% 
-  select(prior_variables) %>% 
-  pivot_longer(everything()) %>% mutate(posterior = F) %>% 
-  mutate(name = gsub("prior_","",name))
 
 
-rbind(priors,posteriors) %>% 
-  ggplot(aes(x = value, fill = posterior))+
-  geom_histogram(alpha = 0.75, position = 'identity', col = "black")+
-  facet_wrap(~name, scales = "free")+
+rts %>% mutate(predictedresp = ifelse(predictedresp == "lower", 0, 1)) %>%
+  ggplot()+
+  geom_bar(aes(x = predictedresp-0.2),fill = "lightblue", alpha = 0.5, width = 0.2)+
+  geom_bar(data = resp, aes(x = resp2),fill = "red", alpha = 0.5, width = 0.2)+
   theme_classic()+
-  geom_vline(data = data.frame(name = variables,
-                               value = as.vector(unlist(resp %>% select(variables) %>% 
-                                                          slice(1)))),
-             aes(xintercept = value), linetype = 2)
-
+  facet_wrap(~draw)
 
 ```
+
+```{r resp pp}
+library(posterior)
+
+n_check = 25
+
+get_pp_percept = function(draww){
+  draww = draww$draww
+  pred_percept = as_draws_df(fit1$draws()) %>% select(matches("pred_percept\\[\\d+\\]")) %>% 
+    mutate(draw = 1:nrow(.)) %>% slice(draww) %>% 
+    pivot_longer(-draw, values_to = "pred_percept",names_to = "trial")%>%
+    mutate(trial = gsub(".*\\[(\\d+).*\\]", "\\1", trial))
+  
+  return(list(pred_percept))
+}
+
+draww = rbinom(n_check,4000,extraDistr::rprop(n_check,1,0.5))
+
+
+parameters = expand.grid(draww = draww) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+
+results <- future_map(data_list, ~get_pp_percept(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+percepts = map_dfr(results,1)
+
+percepts %>% ggplot()+
+  geom_density(aes(x = pred_percept, group = draw),col = "lightblue")+
+  geom_density(data = resp, aes(x = percept),col = "red")+
+  theme_classic()
+```
+
+
 
 ```{r}
 parameter_recovery_expect = function(parameters){
   
   resp = agent_expect(parameters)
   
-  data_stan = list(Nu = nrow(resp %>% filter(resp == "upper")),
-                   Nl = nrow(resp %>% filter(resp == "lower")),
-                   RTu = resp %>% filter(resp == "upper") %>% .$q,
-                   RTl = resp %>% filter(resp == "lower") %>% .$q,
-                   minRT = min(resp$q),
-                   run_estimation = 1,
-                   trials = nrow(resp),
-                   stim = resp$stim,
-                   percept = resp$percept,
-                   u = resp$u,
-                   indexupper = resp %>% filter(resp == "upper") %>% .$trial,
-                   indexlower = resp %>% filter(resp == "lower") %>% .$trial,
-                   resp = c(resp$resp2,0))
+  
+  data_stan = list(RT = resp %>% .$q,
+                 stim = resp %>% .$stim,
+                 cue = resp %>% .$cue,
+                 percept = resp %>% .$percept,
+                 minRT = min(resp$q),
+                 trials = nrow(resp),
+                 u = resp$u,
+                 resp = c(resp$resp2,0))
+  
+  
   
   
   mod = cmdstanr::cmdstan_model(here::here("stan_scripts","ERLDDM.stan"))
-  
-  
+
+
   
   fit1 <- mod$sample(
       data = data_stan,
       chains = 4,
       parallel_chains = 4,
       adapt_delta = 0.9,
+      iter_sampling = 1000,
+      iter_warmup = 500,
+      init = 0,
       max_treedepth = 12,
       refresh = 100
       )
@@ -390,9 +423,11 @@ parameter_recovery_expect = function(parameters){
                                real_beta = parameters$beta,
                                real_tau = parameters$tau,
                                real_lr = parameters$lr,
-                               trials = parameters$n_reversals*parameters$trials_per_reversal,
+                               trials = parameters$trials,
                                real_prec_per = parameters$prec_per,
                                real_nu = parameters$nu,
+                               real_sens_w = parameters$sens_w,
+                               real_sens_c = parameters$sens_c,
                                id = parameters$id)
   return(list(data, diag))
   
@@ -401,18 +436,11 @@ parameter_recovery_expect = function(parameters){
 
 
 ```{r}
-n_reversals = seq(5,length.out = 1)
-#n_reversals = seq(5,length.out = 1)
 
-trials_per_reversal = seq(20, length.out = 1)
-#trials_per_reversal = seq(20, length.out = 1)
-
-
-alpha = seq(1,4, length.out = 4)
+alpha = seq(1,3, length.out = 3)
+alpha = 2
 
 lr = seq(0.1,0.4, length.out = 4)
-
-zeta = seq(3, length.out = 1)
 
 delta  = seq(-2,2,length.out = 4)
 
@@ -422,24 +450,28 @@ tau = seq(0.1, length.out = 1)
 
 e0 = seq(0.5, length.out = 1)
 
-prec_per = seq(1,10, length.out = 3)
+prec_per = seq(1,20, length.out = 3)
 
-nu = seq(0.1,0.4, length.out = 4)
+nu = seq(-2,2, length.out = 4)
+
+sens_w = seq(-2,2, length.out = 1)
+sens_c = seq(-2,2, length.out = 1)
+
 
 replicate = 1
 
-parameters = expand.grid(n_reversals = n_reversals,
-                         lr= lr,
-                         zeta = zeta,
+parameters = expand.grid(lr= lr,
                          alpha = alpha,
                          delta = delta,
                          beta = beta,
                          tau = tau,
                          prec_per = prec_per,
                          nu = nu,
+                         trials = 200,
+                         sens_w = sens_w,
+                         sens_c = sens_c,
                          e0 = e0,
-                         replicate = replicate,
-                         trials_per_reversal = trials_per_reversal) %>% 
+                         replicate = replicate) %>% 
   mutate(id = 1:nrow(.))
 
 data_list <- split(parameters, parameters$id)
@@ -447,27 +479,28 @@ data_list <- split(parameters, parameters$id)
 
 
 ```{r}
-# qq = parameter_recovery_expect(data_list[[50]])
+qq = parameter_recovery_expect(data_list[[50]])
+
 # 
-# cores = availableCores()-1
+#cores = availableCores()-1
 # 
-# plan(multisession, workers = 4)
+plan(multisession, workers = 3)
 # 
-# possfit_model = possibly(.f = parameter_recovery_expect, otherwise = "Error")
+possfit_model = possibly(.f = parameter_recovery_expect, otherwise = "Error")
 # 
-# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
 # 
-# error_indices <- which(results == "Error")
-# 
-# unique(error_indices)
-# 
-# results2 = results[results != "Error"]
+error_indices <- which(results == "Error")
+
+unique(error_indices)
+
+results2 = results[results != "Error"]
 
 ```
 
 
 ```{r, fig.height=10, fig.width=10}
-load(here::here("workspace_data","ERLDMM.RData"))
+load(here::here("report","ERLDMM","workspace.RData"))
 
 
 params = map_dfr(results2, 1)
