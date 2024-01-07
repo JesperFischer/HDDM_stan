@@ -6,6 +6,11 @@ data {
    //Matrix (responses)
   matrix<lower=0>[S*P,T]  RT;
   array[S*P,T] int resp;
+  
+  vector[S*P] real_alpha;
+  vector[S*P] real_beta;
+  vector[S*P] real_delta;
+  vector[S*P] real_tau;
 }
 transformed data{
   int N = 4;
@@ -131,14 +136,26 @@ model {
 
 generated quantities{
   
-  vector[N] ICC;
   matrix[N,N] Corr_B;
   matrix[N,N] Corr_W;
+
+  real resid_alpha_var = variance(real_alpha-alpha);
+  real resid_tau_var = variance(real_tau-tau);
+  real resid_delta_var = variance(real_delta-delta);
+  real resid_beta_var = variance(real_beta-beta);
+
+  vector[N] ICC = square(tau_b) ./ (square(tau_b) + square(tau_w));
+  
+  vector[N] ICC_alpha = square(tau_b) ./ (square(tau_b) + square(tau_w) + resid_alpha_var);
+  
+  vector[N] ICC_tau = square(tau_b) ./ (square(tau_b) + square(tau_w) + resid_tau_var);
+
+  vector[N] ICC_delta = square(tau_b) ./ (square(tau_b) + square(tau_w) + resid_delta_var);
+  
+  vector[N] ICC_beta = square(tau_b) ./ (square(tau_b) + square(tau_w) + resid_beta_var);  
 
   Corr_B = L_b * L_b';
   Corr_W = L_w * L_w';
 
-  ICC = square(tau_b) ./ (square(tau_b) + square(tau_w));
-  
   
 }

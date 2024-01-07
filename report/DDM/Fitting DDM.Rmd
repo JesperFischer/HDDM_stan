@@ -9,7 +9,7 @@ date: "2023-10-22"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm,extraDistr,flextable)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm,extraDistr,flextable,lmerTest,lme4,Matrix)
 
 ```
 
@@ -855,7 +855,7 @@ fit_model2 = function(parameters){
   
   diag = data.frame(fit$diagnostic_summary(), id)
   
-  data = posteriors %>% mutate(num_div = diag$num_divergent,
+  data = data.frame(posteriors %>% mutate(num_div = diag$num_divergent,
                                tree_depth = diag$num_max_treedepth,
                                real_alpha = parameters$alpha,
                                real_delta = parameters$delta,
@@ -863,7 +863,7 @@ fit_model2 = function(parameters){
                                real_tau = parameters$tau,
                                trials = parameters$trials,
                                subs = parameters$subs,
-                               id = id) %>% select(-contains("."))
+                               id = id) %>% select(-contains(".")))
   
   rt_data = data.frame(RT = data_rt$q) %>% mutate(
                                     real_alpha = parameters$alpha,
@@ -898,22 +898,30 @@ fit_model_nofit = function(parameters){
 
 
 ```{r}
-trials = seq(50,200,by = 50)
-trials = c(50)
 
-alpha = rnorm(10,3,0.5)
-delta = seq(-3,3,by = 1)
-delta = rnorm(10,5,1)
 
-beta = seq(0.2,0.8,by = 0.1)
-beta = 0.5
-beta = rnorm(10,0.8,0.1)
+subs = 10
+easy = F
+trials = 100
 
-tau = seq(0.1,0.3,by = 0.1)
-tau = 0.2
-tau = rnorm(10,0.2,0.05)
+if(!easy){
+  alpha = rnorm(subs,1,0.5)
+  delta = rnorm(subs,3,1)
+  beta = rnorm(subs,0.7,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:4
+}else if(easy){
+  alpha = rnorm(subs,1,0.4)
+  delta = rnorm(subs,1,1)
+  beta = rnorm(subs,0.5,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:4
+  
+}
 
-replicate = 1:4
+min(alpha)
+max(beta)
+min(tau)
 
 parameters1 = NULL
 
@@ -949,7 +957,7 @@ data_list <- split(parameters, parameters$id)
 
 Parallelizing the procedure to speed up the process!
 
-```{r}
+```{r, fig.width=10, fig.height=5}
 cores = availableCores()-1
  
 plan(multisession, workers = cores)
@@ -960,23 +968,31 @@ results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options 
 
 #load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
 
+
+#results = results[results != "Error"]
+
+
+
 params = map_dfr(results, 1)
 
-params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+
+fit_noerror = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
   mutate(sessions = rep(1:(length(replicate)),each = 4))%>%
   mutate(subs = as.factor(subs), sessions = as.factor(sessions)) %>% 
   pivot_longer(cols = c("real_alpha","real_beta","real_delta","real_tau"), values_to = "reals",names_to = "real_names") %>% filter(paste0("real_", variable) == real_names) %>% 
     ggplot(aes(x = reals, y = mean, col = variable))+
     geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 0.1))+
-  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free")
+  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free", ncol = 4)+theme_classic()
 
-params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+fit_error = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
   mutate(sessions = rep(1:(length(replicate)),each = 4))%>%
   mutate(subs = as.factor(subs), sessions = as.factor(sessions)) %>% 
   pivot_longer(cols = c("real_alpha","real_beta","real_delta","real_tau"), values_to = "reals",names_to = "real_names") %>% filter(paste0("real_", variable) == real_names) %>% 
     ggplot(aes(x = reals, y = mean, col = variable))+
     geom_point(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 0.1))+
-  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free")
+  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free", ncol = 4)+theme_classic()
+
+(fit_error/fit_noerror)
 
 ```
 
@@ -984,13 +1000,15 @@ params %>% arrange(subs) %>% group_by(subs,trials) %>%
 ```{r}
 params_rt = map_dfr(results, 3)
 
-params = params_rt %>% filter(trials == 50) %>% 
+trial = params_rt$trials[1]
+
+params = params_rt %>% filter(trials == trial) %>% 
   arrange(subs) %>% 
   group_by(subs,trials) %>% 
-  mutate(sessions = rep(1:(length(replicate)),each = 50))
+  mutate(sessions = rep(1:(length(replicate)),each = trial))
 
 
-mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DDM_ICC_4sessions.stan"))
+mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DMM_ICC_4sessions.stan"))
 
 sesTsubs = length(unique(params$subs))*length(unique(params$sessions))
 
@@ -1000,8 +1018,22 @@ data_stan = list(T = nrow(params %>% filter(subs == 1 & sessions == 1)),
                  RT = matrix(params %>% arrange(sessions, subs) %>% .$RT, nrow = sesTsubs, byrow = T),
                  resp = matrix(params %>% arrange(sessions, subs) %>% 
                                  mutate(resp = ifelse(resp == "upper",1,0)) %>% .$resp, nrow = sesTsubs, byrow = T),
-                 minRT = params %>% group_by(sessions, subs) %>% summarize(minRT = min(RT)) %>% .$minRT
+                 minRT = params %>% group_by(sessions, subs) %>% summarize(minRT = min(RT)) %>% .$minRT,
+                 real_alpha = params %>% group_by(sessions, subs) %>% summarize(alpha = mean(real_alpha)) %>% .$alpha,
+                 real_delta = params %>% group_by(sessions, subs) %>% summarize(delta = mean(real_delta)) %>% .$delta,
+                 real_beta = params %>% group_by(sessions, subs) %>% summarize(beta = mean(real_beta)) %>% .$beta,
+                 real_tau = params %>% group_by(sessions, subs) %>% summarize(tau = mean(real_tau)) %>% .$tau
+                 
                  )
+
+# pf = mod$pathfinder(
+#     data = data_stan)
+# 
+# pf$summary("ICC_alpha")[1,]
+# pf$summary("ICC_tau")[2,]
+# pf$summary("ICC_beta")[4,]
+# pf$summary("ICC_delta")[3,]
+
 
 fit <- mod$sample(
     data = data_stan,
@@ -1021,8 +1053,60 @@ hist(data.frame(fit$summary("tau")) %>% .$mean - rep(unique(params %>% arrange(s
 hist(data.frame(fit$summary("delta")) %>% .$mean - rep(unique(params %>% arrange(sessions, subs) %>% .$real_delta),2))
 
 fit$summary("ICC")
+rbind(fit$summary("ICC_alpha")[1,],fit$summary("ICC_tau")[2,],fit$summary("ICC_delta")[3,],fit$summary("ICC_beta")[4,])
 
 
+fit$summary("resid_delta_var")
+fit$summary("tau_b")
+fit$summary("tau_w")
+fit$summary("resid_alpha_var")
+
+```
+
+
+```{r}
+hier_fitplot = data.frame(fit$summary(c("alpha","delta","tau","beta"))) %>% 
+  mutate(sessions = rep(rep(1:length(replicate), each = subs),4)) %>% 
+  mutate(subs = rep(rep(1:subs, length(replicate)),4)) %>%
+  mutate(subs = as.numeric(subs),
+               parameter = sub("\\[.*", "", .$variable))
+
+
+## do the residual variances make sense?
+var_tau = var(data_stan$real_tau - hier_fitplot %>% filter(parameter == "tau") %>% .$mean)
+fit$summary("resid_tau_var")
+
+as_draws_df(fit$draws("resid_tau_var")) %>% 
+  ggplot(aes(x = resid_tau_var))+geom_histogram()+
+  geom_vline(xintercept = var_tau)
+
+
+var_alpha = var(data_stan$real_alpha - hier_fitplot %>% filter(parameter == "alpha") %>% .$mean)
+fit$summary("resid_alpha_var")
+
+as_draws_df(fit$draws("resid_alpha_var")) %>% 
+  ggplot(aes(x = resid_alpha_var))+geom_histogram()+
+  geom_vline(xintercept = var_alpha)
+
+
+var_delta = var(data_stan$real_delta - hier_fitplot %>% filter(parameter == "delta") %>% .$median)
+fit$summary("resid_delta_var")
+
+as_draws_df(fit$draws("resid_delta_var")) %>% 
+  ggplot(aes(x = resid_delta_var))+geom_histogram()+
+  geom_vline(xintercept = var_delta)
+
+var_beta = var(data_stan$real_beta - hier_fitplot %>% filter(parameter == "beta") %>% .$mean)
+fit$summary("resid_beta_var")
+
+as_draws_df(fit$draws("resid_beta_var")) %>% 
+  ggplot(aes(x = resid_beta_var))+geom_histogram()+
+  geom_vline(xintercept = var_beta)
+
+```
+
+
+```{r}
 #pf = mod$pathfinder(data = data_stan)
 
 ## linear modeling of it
@@ -1042,9 +1126,9 @@ params = map_dfr(results, 1)
 
 params2 = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
   mutate(sessions = rep(1:(length(replicate)),each = 4)) %>% 
-  filter(variable == "beta")
+  filter(variable == "delta")
 
-mm = lmerTest::lmer(mean ~ real_alpha + (1|subs), data = params2)
+mm = lmerTest::lmer(mean ~ real_delta + (1|subs), data = params2)
 
 summary(mm)
 
@@ -1065,38 +1149,39 @@ icc
 
 
 as_draws_df(fit$draws("ICC[1]")) %>% ggplot(aes(x = `ICC[1]`))+geom_histogram()+geom_vline(xintercept = icc)
-```
 
-
-```{r, fig.height=5,fig.width=10}
 as_draws_df(fit$draws("ICC")) %>% 
   pivot_longer(everything()) %>% 
   filter(grepl("ICC",name)) %>% 
   ggplot(aes(x = value))+geom_histogram()+facet_wrap(~name)
 
 
+cbind(as_draws_df(fit$draws("ICC_alpha"))[,1],
+      as_draws_df(fit$draws("ICC_tau"))[,2],
+      as_draws_df(fit$draws("ICC_delta"))[,3],
+      as_draws_df(fit$draws("ICC_beta"))[,4]) %>% 
+  pivot_longer(everything()) %>% 
+  filter(grepl("ICC",name)) %>% 
+  ggplot(aes(x = value))+geom_histogram()+facet_wrap(~name)
+
+```
+
+
+```{r, fig.height=5,fig.width=10}
 hier_fitplot = data.frame(fit$summary(c("alpha","delta","tau","beta"))) %>% 
-  mutate(subs1 = as.numeric(gsub(".*\\[(\\d+)\\]", "\\1", variable))) %>% 
-  mutate(
-    subs = case_when(
-      grepl("1$", as.character(subs1)) ~ "1",
-      grepl("2$", as.character(subs1)) ~ "2",
-      grepl("3$", as.character(subs1)) ~ "3",
-      grepl("4$", as.character(subs1)) ~ "4",
-      grepl("5$", as.character(subs1)) ~ "5",
-      grepl("6$", as.character(subs1)) ~ "6",
-      grepl("7$", as.character(subs1)) ~ "7",
-      grepl("8$", as.character(subs1)) ~ "8",
-      grepl("9$", as.character(subs1)) ~ "9",
-      TRUE ~ "10"  # If none of the conditions match, you can assign NA or any other default value
-    )
-  ) %>% mutate(subs = as.numeric(subs),
+  mutate(sessions = rep(rep(1:length(replicate), each = subs),4)) %>% 
+  mutate(subs = rep(rep(1:subs, length(replicate)),4)) %>%
+  mutate(subs = as.numeric(subs),
                parameter = sub("\\[.*", "", .$variable))
 
+
 hier_fitplot %>% 
+#  filter(subs < 10) %>%
   ggplot(aes(x = subs, y = mean, col = parameter))+
   geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
-  geom_hline(data = params2 %>% pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
+  geom_hline(data = params2 %>% 
+#               filter(subs < 10) %>%
+               pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
              aes(yintercept = real))+
   facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
 
@@ -1104,9 +1189,12 @@ hier_fitplot %>%
 #indiv fits
 params %>% arrange(subs) %>% group_by(subs,trials) %>% 
   mutate(sessions = rep(1:(length(replicate)),each = 4)) %>%
+#  filter(subs < 10) %>%
     ggplot(aes(x = subs, y = mean, col = variable))+
     geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 2))+
-    geom_hline(data = params2 %>% pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
+    geom_hline(data = params2 %>% 
+#                 filter(subs < 10) %>%
+                 pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
              aes(yintercept = real))+facet_wrap(~subs, ncol = 5)+ggtitle("indiv fits")
 
 
@@ -1115,36 +1203,53 @@ full_join(params %>% arrange(subs) %>% group_by(subs,trials) %>%
         mutate(sessions = rep(1:(length(replicate)),each = 4)) %>% 
           mutate(indiv_fit = T, subs2 = subs) %>% rename(parameter = variable),
       hier_fitplot %>% mutate(indiv_fit = F, subs2 = subs+10)) %>%  
+  #filter(subs < 10) %>% 
   ggplot(aes(x = subs2, y = mean, col = parameter))+
     geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 2))+
   facet_wrap(~subs, ncol = 5, scales = "free")+
   ggtitle("Hierarchical estimates to the right")
 
+
+```
+
+
+```{r, fig.height=5,fig.width=10}
+hier_fitplot %>% filter(parameter == "tau") %>% 
+  ggplot(aes(x = subs, y = mean, col = parameter))+
+  geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
+  geom_hline(data = params2 %>% pivot_longer(cols = c("real_tau"), values_to = "real"),
+             aes(yintercept = real))+
+  facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
+
+
+hier_fitplot %>% filter(parameter == "beta") %>% 
+  ggplot(aes(x = subs, y = mean, col = parameter))+
+  geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
+  geom_hline(data = params2 %>% pivot_longer(cols = c("real_beta"), values_to = "real"),
+             aes(yintercept = real))+
+  facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
+
+
+hier_fitplot %>% filter(parameter == "alpha") %>% 
+  ggplot(aes(x = subs, y = mean, col = parameter))+
+  geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
+  geom_hline(data = params2 %>% pivot_longer(cols = c("real_alpha"), values_to = "real"),
+             aes(yintercept = real))+
+  facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
+
+
+hier_fitplot %>% filter(parameter == "delta") %>% 
+  ggplot(aes(x = subs, y = mean, col = parameter))+
+  geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
+  geom_hline(data = params2 %>% pivot_longer(cols = c("real_delta"), values_to = "real"),
+             aes(yintercept = real))+
+  facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
+
+
 ```
 
 
 ```{r, fig.height=5,fig.width=7}
-data.frame(fit$summary("delta")) %>% 
-  mutate(subs1 = as.numeric(gsub(".*\\[(\\d+)\\]", "\\1", variable))) %>% 
-  mutate(
-    subs = case_when(
-      grepl("1$", as.character(subs1)) ~ "1",
-      grepl("2$", as.character(subs1)) ~ "2",
-      grepl("3$", as.character(subs1)) ~ "3",
-      grepl("4$", as.character(subs1)) ~ "4",
-      grepl("5$", as.character(subs1)) ~ "5",
-      grepl("6$", as.character(subs1)) ~ "6",
-      grepl("7$", as.character(subs1)) ~ "7",
-      grepl("8$", as.character(subs1)) ~ "8",
-      grepl("9$", as.character(subs1)) ~ "9",
-      TRUE ~ "10"  # If none of the conditions match, you can assign NA or any other default value
-    )) %>%   ggplot(aes(x = subs, y = mean, col = as.factor(subs)))+
-  geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 2))+
-  geom_hline(data = params2, aes(yintercept = real_delta))+facet_wrap(~subs)
-
-
-
-
 
 
 params %>% arrange(subs) %>% group_by(subs,trials) %>% 
@@ -1165,7 +1270,354 @@ params %>% arrange(subs) %>% group_by(subs,trials) %>%
 
 
 
+params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = 4))%>%
+  mutate(subs = as.factor(subs), sessions = as.factor(sessions)) %>% 
+  pivot_longer(cols = c("real_alpha","real_beta","real_delta","real_tau"), values_to = "reals",names_to = "real_names") %>% filter(paste0("real_", variable) == real_names) %>% 
+    ggplot(aes(x = reals, y = mean, col = variable))+
+    geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 0.1))+
+  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free")
+
+
+
 ```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+
+subs = 10
+easy = F
+trials = 50
+
+if(!easy){
+  alpha = rnorm(subs,1,0.5)
+  delta = rnorm(subs,3,1)
+  beta = rnorm(subs,0.7,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:4
+}else if(easy){
+  alpha = rnorm(subs,1,0.4)
+  delta = rnorm(subs,1,1)
+  beta = rnorm(subs,0.5,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:4
+  
+}
+
+min(alpha)
+max(beta)
+min(tau)
+
+parameters1 = NULL
+
+parameters = expand.grid(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+
+parameters = data.frame(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials)
+
+
+for(i in 1:(length(replicate))){
+  parameters1 = rbind(parameters1,parameters)
+}
+
+parameters = parameters1 %>% 
+  mutate(id = 1:nrow(.)) %>% 
+  mutate(subs = group_indices(., alpha))
+
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+
+
+Parallelizing the procedure to speed up the process!
+
+```{r, fig.width=10, fig.height=5}
+cores = availableCores()-1
+ 
+plan(multisession, workers = cores)
+  
+possfit_model = possibly(.f = fit_model2, otherwise = "Error")
+ 
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+#load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
+
+
+#results = results[results != "Error"]
+
+
+
+params = map_dfr(results, 1)
+
+
+fit_noerror = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = 4))%>%
+  mutate(subs = as.factor(subs), sessions = as.factor(sessions)) %>% 
+  pivot_longer(cols = c("real_alpha","real_beta","real_delta","real_tau"), values_to = "reals",names_to = "real_names") %>% filter(paste0("real_", variable) == real_names) %>% 
+    ggplot(aes(x = reals, y = mean, col = variable))+
+    geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 0.1))+
+  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free", ncol = 4)+theme_classic()
+
+fit_error = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = 4))%>%
+  mutate(subs = as.factor(subs), sessions = as.factor(sessions)) %>% 
+  pivot_longer(cols = c("real_alpha","real_beta","real_delta","real_tau"), values_to = "reals",names_to = "real_names") %>% filter(paste0("real_", variable) == real_names) %>% 
+    ggplot(aes(x = reals, y = mean, col = variable))+
+    geom_point(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 0.1))+
+  geom_abline(slope = 1, intercept =0)+facet_wrap(~real_names, scales ="free", ncol = 4)+theme_classic()
+
+(fit_error/fit_noerror)
+
+```
+
+
+```{r}
+params_rt = map_dfr(results, 3)
+
+trial = params_rt$trials[1]
+
+params = params_rt %>% filter(trials == trial) %>% 
+  arrange(subs) %>% 
+  group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = trial))
+
+
+mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DMM_ICC_4sessions.stan"))
+
+sesTsubs = length(unique(params$subs))*length(unique(params$sessions))
+
+data_stan = list(T = nrow(params %>% filter(subs == 1 & sessions == 1)),
+                 P = length(unique(params$subs)),
+                 S = length(unique(params$sessions)),
+                 RT = matrix(params %>% arrange(sessions, subs) %>% .$RT, nrow = sesTsubs, byrow = T),
+                 resp = matrix(params %>% arrange(sessions, subs) %>% 
+                                 mutate(resp = ifelse(resp == "upper",1,0)) %>% .$resp, nrow = sesTsubs, byrow = T),
+                 minRT = params %>% group_by(sessions, subs) %>% summarize(minRT = min(RT)) %>% .$minRT,
+                 real_alpha = params %>% group_by(sessions, subs) %>% summarize(alpha = mean(real_alpha)) %>% .$alpha,
+                 real_delta = params %>% group_by(sessions, subs) %>% summarize(delta = mean(real_delta)) %>% .$delta,
+                 real_beta = params %>% group_by(sessions, subs) %>% summarize(beta = mean(real_beta)) %>% .$beta,
+                 real_tau = params %>% group_by(sessions, subs) %>% summarize(tau = mean(real_tau)) %>% .$tau
+                 
+                 )
+
+# pf = mod$pathfinder(
+#     data = data_stan)
+# 
+# pf$summary("ICC_alpha")[1,]
+# pf$summary("ICC_tau")[2,]
+# pf$summary("ICC_beta")[4,]
+# pf$summary("ICC_delta")[3,]
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    refresh = 10,
+    init = 0,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+fit
+
+
+hist(data.frame(fit$summary("alpha")) %>% .$mean - rep(unique(params %>% arrange(sessions, subs) %>% .$real_alpha),2))
+hist(data.frame(fit$summary("beta")) %>% .$mean - rep(unique(params %>% arrange(sessions, subs) %>% .$real_beta),2))
+hist(data.frame(fit$summary("tau")) %>% .$mean - rep(unique(params %>% arrange(sessions, subs) %>% .$real_tau),2))
+hist(data.frame(fit$summary("delta")) %>% .$mean - rep(unique(params %>% arrange(sessions, subs) %>% .$real_delta),2))
+
+fit$summary("ICC")
+rbind(fit$summary("ICC_alpha")[1,],fit$summary("ICC_tau")[2,],fit$summary("ICC_delta")[3,],fit$summary("ICC_beta")[4,])
+
+
+fit$summary("resid_delta_var")
+fit$summary("tau_b")
+fit$summary("tau_w")
+fit$summary("resid_alpha_var")
+
+```
+
+
+```{r}
+hier_fitplot = data.frame(fit$summary(c("alpha","delta","tau","beta"))) %>% 
+  mutate(sessions = rep(rep(1:length(replicate), each = subs),4)) %>% 
+  mutate(subs = rep(rep(1:subs, length(replicate)),4)) %>%
+  mutate(subs = as.numeric(subs),
+               parameter = sub("\\[.*", "", .$variable))
+
+
+## do the residual variances make sense?
+var_tau = var(data_stan$real_tau - hier_fitplot %>% filter(parameter == "tau") %>% .$mean)
+fit$summary("resid_tau_var")
+
+as_draws_df(fit$draws("resid_tau_var")) %>% 
+  ggplot(aes(x = resid_tau_var))+geom_histogram()+
+  geom_vline(xintercept = var_tau)
+
+
+var_alpha = var(data_stan$real_alpha - hier_fitplot %>% filter(parameter == "alpha") %>% .$mean)
+fit$summary("resid_alpha_var")
+
+as_draws_df(fit$draws("resid_alpha_var")) %>% 
+  ggplot(aes(x = resid_alpha_var))+geom_histogram()+
+  geom_vline(xintercept = var_alpha)
+
+
+var_delta = var(data_stan$real_delta - hier_fitplot %>% filter(parameter == "delta") %>% .$median)
+fit$summary("resid_delta_var")
+
+as_draws_df(fit$draws("resid_delta_var")) %>% 
+  ggplot(aes(x = resid_delta_var))+geom_histogram()+
+  geom_vline(xintercept = var_delta)
+
+var_beta = var(data_stan$real_beta - hier_fitplot %>% filter(parameter == "beta") %>% .$mean)
+fit$summary("resid_beta_var")
+
+as_draws_df(fit$draws("resid_beta_var")) %>% 
+  ggplot(aes(x = resid_beta_var))+geom_histogram()+
+  geom_vline(xintercept = var_beta)
+
+```
+
+
+```{r}
+#pf = mod$pathfinder(data = data_stan)
+
+## linear modeling of it
+# 
+# cores = availableCores()-1
+#  
+# plan(multisession, workers = cores)
+#   
+# possfit_model = possibly(.f = fit_model2, otherwise = "Error")
+#  
+# results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+
+params = map_dfr(results, 1)
+
+
+
+params2 = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = 4)) %>% 
+  filter(variable == "delta")
+
+mm = lmerTest::lmer(mean ~ real_delta + (1|subs), data = params2)
+
+summary(mm)
+
+vv = data.frame(VarCorr(mm))
+
+sub_var = vv %>% filter(grp == "subs") %>% .$vcov          #between subject (between session)
+session_var = vv %>% filter(grp == "sessions") %>% .$vcov  #within session (between subjects)
+resid_var = vv %>% filter(grp == "Residual") %>% .$vcov
+
+icc = sub_var/(sub_var+resid_var)
+
+resid_var/(sub_var+resid_var)
+
+
+#icc = (resid_var)/(sub_var+resid_var)
+
+icc
+
+
+as_draws_df(fit$draws("ICC[1]")) %>% ggplot(aes(x = `ICC[1]`))+geom_histogram()+geom_vline(xintercept = icc)
+
+as_draws_df(fit$draws("ICC")) %>% 
+  pivot_longer(everything()) %>% 
+  filter(grepl("ICC",name)) %>% 
+  ggplot(aes(x = value))+geom_histogram()+facet_wrap(~name)
+
+
+cbind(as_draws_df(fit$draws("ICC_alpha"))[,1],
+      as_draws_df(fit$draws("ICC_tau"))[,2],
+      as_draws_df(fit$draws("ICC_delta"))[,3],
+      as_draws_df(fit$draws("ICC_beta"))[,4]) %>% 
+  pivot_longer(everything()) %>% 
+  filter(grepl("ICC",name)) %>% 
+  ggplot(aes(x = value))+geom_histogram()+facet_wrap(~name)
+
+```
+
+
+```{r, fig.height=5,fig.width=10}
+hier_fitplot = data.frame(fit$summary(c("alpha","delta","tau","beta"))) %>% 
+  mutate(sessions = rep(rep(1:length(replicate), each = subs),4)) %>% 
+  mutate(subs = rep(rep(1:subs, length(replicate)),4)) %>%
+  mutate(subs = as.numeric(subs),
+               parameter = sub("\\[.*", "", .$variable))
+
+
+hier_fitplot %>% 
+#  filter(subs < 10) %>%
+  ggplot(aes(x = subs, y = mean, col = parameter))+
+  geom_pointrange(aes(y = mean, ymin = q5, max = q95), position=position_jitter(width = 2))+
+  geom_hline(data = params2 %>% 
+#               filter(subs < 10) %>%
+               pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
+             aes(yintercept = real))+
+  facet_wrap(~subs, ncol = 5)+ggtitle("hier fits")
+
+
+#indiv fits
+params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+  mutate(sessions = rep(1:(length(replicate)),each = 4)) %>%
+#  filter(subs < 10) %>%
+    ggplot(aes(x = subs, y = mean, col = variable))+
+    geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 2))+
+    geom_hline(data = params2 %>% 
+#                 filter(subs < 10) %>%
+                 pivot_longer(cols = c("real_alpha","real_delta","real_beta","real_tau"), values_to = "real"),
+             aes(yintercept = real))+facet_wrap(~subs, ncol = 5)+ggtitle("indiv fits")
+
+
+
+full_join(params %>% arrange(subs) %>% group_by(subs,trials) %>% 
+        mutate(sessions = rep(1:(length(replicate)),each = 4)) %>% 
+          mutate(indiv_fit = T, subs2 = subs) %>% rename(parameter = variable),
+      hier_fitplot %>% mutate(indiv_fit = F, subs2 = subs+10)) %>%  
+  #filter(subs < 10) %>% 
+  ggplot(aes(x = subs2, y = mean, col = parameter))+
+    geom_pointrange(aes(y = mean, ymin = q5, max = q95),position=position_jitter(width = 2))+
+  facet_wrap(~subs, ncol = 5, scales = "free")+
+  ggtitle("Hierarchical estimates to the right")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
