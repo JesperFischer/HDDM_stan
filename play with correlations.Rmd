@@ -1,0 +1,170 @@
+---
+title: "play with correlations"
+output: html_document
+date: '2024-01-07'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm,extraDistr,flextable, faux)
+
+```
+
+## R Markdown
+
+```{r}
+sims = 100
+measure_error = 0.5
+
+dat <- rnorm_multi(n = sims, 
+                  mu = c(0, 0),
+                  sd = c(1, 1),
+                  r = c(0.7), 
+                  varnames = c("a", "b"),
+                  empirical = FALSE)
+
+
+dat %>% ggplot(aes(x = a,y = b))+
+  geom_point()+
+  geom_label(aes(x = 0, y = 1, label = paste0("r = ",round(cor.test(dat$a,dat$b)$estimate,2))))
+
+
+dat %>% mutate(sda = measure_error, sdb = measure_error)%>% 
+  ggplot()+
+  geom_pointrange(aes(x = a,y = b,ymin = b-sdb,ymax = b+sdb))+
+  geom_pointrange(aes(x = a,y = b,xmin = a-sda,xmax = a+sda))+
+  geom_label(aes(x = 0, y = 1, label = paste0("r = ",round(cor.test(dat$a,dat$b)$estimate,2))))
+
+
+# Use rowwise() and mutate() to simulate values for each row
+a = dat %>% 
+  mutate(sda = 2, sdb = 2, id = 1:nrow(.))%>%
+  rowwise() %>%
+  mutate(sima = list(rnorm(100,rnorm(100,a,measure_error*10), sda)),
+         simb = list(rnorm(100,rnorm(100,b,measure_error*10), sdb)))
+
+# Unnest the list column to get the simulated values in separate rows
+simulated_df <- a %>%
+  unnest(cols = c(sima, simb)) 
+
+
+data_stan = list(N = nrow(simulated_df),
+                 n_points = length(unique(simulated_df$id)),
+                 sima = simulated_df$sima,
+                 simb = simulated_df$simb,
+                 id = simulated_df$id)
+
+mod = cmdstanr::cmdstan_model(here::here("play with correlations.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    refresh = 100,
+    init = 0,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+
+fit$summary(c("mua","mub"))
+
+data.frame(fit$summary(c("mua","mub"))) %>% 
+  mutate(variable = ifelse(grepl("mua",variable),"mua","mub"), id = rep(1:sims,2)) %>%
+  select(q5,mean,q95,variable,id) %>% 
+  pivot_wider(names_from = variable, values_from = c("mean", "q5", "q95"), id_cols = id) %>% 
+  ggplot()+
+    geom_pointrange(aes(x = mean_mua, y = mean_mub, xmax = q5_mua, xmin = q95_mua))+
+    geom_pointrange(aes(x = mean_mua, y = mean_mub, ymax = q5_mub, ymin = q95_mub))
+  
+
+fit$summary("r")
+
+fit$summary("corr")
+
+
+as_draws_df(fit$draws("corr"))%>% select(-contains(".")) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(x = value))+
+  geom_histogram(col = "black")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$estimate,col = "red")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$conf.int[[1]],col = "red")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$conf.int[[2]],col = "red")
+
+
+
+
+hier = data.frame(fit$summary(c("mua","mub"))) %>% 
+  select(mean, variable,q5,q95) %>% 
+  mutate(variable = ifelse(grepl("mua",variable), "mua","mub"), id = rep(1:100,2)) %>% 
+  mutate(model = T) %>% pivot_wider(values_from = c("mean","q5","q95"), names_from = "variable")
+
+
+dat = dat %>% mutate(sda = 0.3, sdb = 0.3)%>% mutate(model = F)
+
+hier %>% ggplot(aes(col = model))+
+  geom_pointrange(aes(x = mean_mua, xmin = q5_mua, xmax = q95_mua, y = mean_mub))+
+  geom_pointrange(aes(x = mean_mua, ymin = q5_mub, ymax = q95_mub, y = mean_mub))+
+  geom_pointrange(data = dat, aes(x = a,y = b,ymin = b-2*sdb,ymax = b+2*sdb))+
+  geom_pointrange(data = dat, aes(x = a,y = b,xmin = a-2*sda,xmax = a+2*sda))
+```
+
+
+```{r}
+mod = cmdstanr::cmdstan_model(here::here("play with multinormal.stan"))
+
+
+fit <- mod$sample(
+    data = data_stan,
+    chains = 4,
+    refresh = 100,
+    init = 0,
+    parallel_chains = 4,
+    adapt_delta = 0.9,
+    max_treedepth = 12)
+
+fit$summary(c("mua","mub"))
+
+data.frame(fit$summary(c("mua","mub"))) %>% 
+  mutate(variable = ifelse(grepl("mua",variable),"mua","mub"), id = rep(1:sims,2)) %>%
+  select(q5,mean,q95,variable,id) %>% 
+  pivot_wider(names_from = variable, values_from = c("mean", "q5", "q95"), id_cols = id) %>% 
+  ggplot()+
+    geom_pointrange(aes(x = mean_mua, y = mean_mub, xmax = q5_mua, xmin = q95_mua))+
+    geom_pointrange(aes(x = mean_mua, y = mean_mub, ymax = q5_mub, ymin = q95_mub))
+  
+
+fit$summary("r")
+
+fit$summary("corr")
+
+matrix(data.frame(fit$summary("corr")) %>% .$mean,nrow = 4, byrow = T)
+
+
+
+as_draws_df(fit$draws("corr[2,1]"))%>% select(-contains(".")) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(x = value))+
+  geom_histogram(col = "black")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$estimate,col = "red")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$conf.int[[1]],col = "red")+
+  geom_vline(xintercept = cor.test(dat$a,dat$b)$conf.int[[2]],col = "red")
+
+
+hier = data.frame(fit$summary(c("mua","mub"))) %>% 
+  select(mean, variable,q5,q95) %>% 
+  mutate(variable = ifelse(grepl("mua",variable), "mua","mub"), id = rep(1:100,2)) %>% 
+  mutate(model = T) %>% pivot_wider(values_from = c("mean","q5","q95"), names_from = "variable")
+
+
+dat = dat %>% mutate(sda = 0.3, sdb = 0.3)%>% mutate(model = F)
+
+hier %>% ggplot(aes(col = model))+
+  geom_pointrange(aes(x = mean_mua, xmin = q5_mua, xmax = q95_mua, y = mean_mub))+
+  geom_pointrange(aes(x = mean_mua, ymin = q5_mub, ymax = q95_mub, y = mean_mub))+
+  geom_pointrange(data = dat, aes(x = a,y = b,ymin = b-2*sdb,ymax = b+2*sdb))+
+  geom_pointrange(data = dat, aes(x = a,y = b,xmin = a-2*sda,xmax = a+2*sda))
+
+
+```
+
