@@ -901,26 +901,26 @@ fit_model_nofit = function(parameters){
 
 
 subs = 10
-easy = F
-trials = 100
+easy = T
+trials = 50
 
 if(!easy){
   alpha = rnorm(subs,1,0.5)
   delta = rnorm(subs,3,1)
   beta = rnorm(subs,0.7,0.1)
   tau = rnorm(subs,0.2,0.05)
-  replicate = 1:4
+  replicate = 1:2
 }else if(easy){
   alpha = rnorm(subs,1,0.4)
   delta = rnorm(subs,1,1)
   beta = rnorm(subs,0.5,0.1)
   tau = rnorm(subs,0.2,0.05)
-  replicate = 1:4
+  replicate = 1:2
   
 }
 
 min(alpha)
-max(beta)
+min(beta)
 min(tau)
 
 parameters1 = NULL
@@ -1060,6 +1060,7 @@ fit$summary("resid_delta_var")
 fit$summary("tau_b")
 fit$summary("tau_w")
 fit$summary("resid_alpha_var")
+fit$summary("resid_tau_var")
 
 ```
 
@@ -1121,8 +1122,6 @@ as_draws_df(fit$draws("resid_beta_var")) %>%
 
 
 params = map_dfr(results, 1)
-
-
 
 params2 = params %>% arrange(subs) %>% group_by(subs,trials) %>% 
   mutate(sessions = rep(1:(length(replicate)),each = 4)) %>% 
@@ -1281,6 +1280,167 @@ params %>% arrange(subs) %>% group_by(subs,trials) %>%
 
 
 ```
+
+```{r}
+
+
+subs = 10
+easy = T
+trials = 50
+
+if(!easy){
+  alpha = rnorm(subs,1,0.5)
+  delta = rnorm(subs,3,1)
+  beta = rnorm(subs,0.7,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:2
+}else if(easy){
+  alpha = rnorm(subs,1,0.4)
+  delta = rnorm(subs,1,1)
+  beta = rnorm(subs,0.5,0.1)
+  tau = rnorm(subs,0.2,0.05)
+  replicate = 1:2
+  
+}
+
+min(alpha)
+min(beta)
+min(tau)
+
+parameters1 = NULL
+
+parameters = expand.grid(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials) %>% 
+  mutate(id = 1:nrow(.))
+
+
+parameters = data.frame(alpha = alpha,
+                         delta = delta,
+                         beta = beta,
+                         tau = tau,
+                         trials = trials)
+
+
+for(i in 1:(length(replicate))){
+  parameters1 = rbind(parameters1,parameters)
+}
+
+parameters = parameters1 %>% 
+  mutate(id = 1:nrow(.)) %>% 
+  mutate(subs = group_indices(., alpha))
+
+
+data_list <- split(parameters, parameters$id)
+
+```
+
+
+
+Parallelizing the procedure to speed up the process!
+
+
+
+```{r, fig.width=10, fig.height=5}
+
+# Simulate
+fit_for_lmer = function(parameters){
+  id = parameters$id
+  
+  data_rt = rwiener(n = parameters$trials,
+          alpha = parameters$alpha,
+          delta = parameters$delta,
+          beta = parameters$beta,
+          tau = parameters$tau)
+  
+  data_stan = list(trials = nrow(data_rt),
+                 RT = data_rt$q,
+                 resp = ifelse(data_rt$resp == "lower",0,1),
+                 minRT = min(data_rt$q))
+  
+  # Fit model
+  mod = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DDM.stan"))
+  
+  
+  fit1 <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      refresh = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  #Extract parameters and diagnosics
+   
+  
+  post = as_draws_df(fit1$draws(c("alpha","delta","beta","tau"))) %>% 
+    slice(1:100) %>% 
+    select(-contains(".")) %>%
+    mutate(real_alpha = parameters$alpha,
+           real_tau = parameters$tau,
+           real_delta = parameters$delta,
+           real_beta = parameters$beta,
+           subs = parameters$subs)
+  
+  return(list(post))
+  
+}
+
+
+cores = availableCores()-1
+ 
+plan(multisession, workers = cores)
+  
+possfit_model = possibly(.f = fit_for_lmer, otherwise = "Error")
+ 
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+params = map_dfr(results, 1)
+```
+
+
+```{r, fig.width=10, fig.height=5}
+
+params = params %>% mutate(sessions = rep(1:2,each = 40))
+
+
+mm = lmerTest::lmer(alpha ~ real_alpha + (1|subs/sessions), data = params)
+mm = lmerTest::lmer(alpha ~ real_alpha + (1|subs)+(1|sessions), data = params)
+summary(mm)
+
+mm = lmerTest::lmer(delta ~ real_delta + (1|subs)+(1|sessions), data = params)
+summary(mm)
+
+mm = lmerTest::lmer(beta ~ real_beta + (1|subs)+(1|sessions), data = params)
+summary(mm)
+
+mm = lmerTest::lmer(tau ~ real_tau + (1|subs)+(1|sessions), data = params)
+summary(mm)
+
+vv = data.frame(VarCorr(mm))
+
+sub_var = vv %>% filter(grp == "subs") %>% .$vcov          #between subject (between session)
+session_var = vv %>% filter(grp == "sessions") %>% .$vcov  #within session (between subjects)
+resid_var = vv %>% filter(grp == "Residual") %>% .$vcov
+
+icc = sub_var/(sub_var+resid_var)
+
+resid_var/(sub_var+resid_var)
+
+
+#icc = (resid_var)/(sub_var+resid_var)
+
+icc
+
+```
+
+
+
+
+
+
 
 
 
