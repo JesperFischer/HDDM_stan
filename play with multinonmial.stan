@@ -64,9 +64,36 @@ model {
 
 generated quantities{
   
-  real r = (sum(mua-mean(mua)*mub-mean(mub)))/(sqrt((sum((mua-mean(mua))^2)*sum((mub-mean(mub))^2))));
   
   matrix[n_param,n_param] corr = L_u * L_u';
+  
+  real correlation;
+  real sum_squared_diff_alpha;
+  real sum_product_diff_alpha;
+
+  array[n_points] real diff_s1_alpha;
+  array[n_points] real diff_s2_alpha;
+  array[n_points] real sq_diff_s1_alpha;
+  array[n_points] real sq_diff_s2_alpha;
+  array[n_points] real product_diff_alpha;
+ 
+ 
+   for (s in 1:n_points){
+    diff_s1_alpha[s] = mean(mua)-mua[s];
+    diff_s2_alpha[s] = mean(mub)-mub[s];
+    
+    product_diff_alpha[s] = diff_s1_alpha[s] * diff_s2_alpha[s];
+    
+    sq_diff_s1_alpha[s] = (mean(mua)-mua[s])^2;
+    sq_diff_s2_alpha[s] = (mean(mub)-mub[s])^2;
+  }
+  
+  sum_squared_diff_alpha = sum(sq_diff_s1_alpha) * sum(sq_diff_s2_alpha);
+  
+  sum_product_diff_alpha = sum(product_diff_alpha);
+
+  correlation = sum_product_diff_alpha / sqrt(sum_squared_diff_alpha);
+
   
 }
 

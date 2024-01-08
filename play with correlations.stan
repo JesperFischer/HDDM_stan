@@ -36,9 +36,8 @@ model {
 
 generated quantities{
   
-  real r = (sum(mua-mean(mua)*mub-mean(mub)))/(sqrt((sum((mua-mean(mua))^2)*sum((mub-mean(mub))^2))));
- 
-  real corr;
+
+  real correlation;
   real sum_squared_diff_alpha;
   real sum_product_diff_alpha;
 
@@ -63,7 +62,7 @@ generated quantities{
   
   sum_product_diff_alpha = sum(product_diff_alpha);
 
-  corr = sum_product_diff_alpha / sqrt(sum_squared_diff_alpha);
+  correlation = sum_product_diff_alpha / sqrt(sum_squared_diff_alpha);
 
   
 }

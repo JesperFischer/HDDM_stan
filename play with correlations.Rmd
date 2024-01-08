@@ -6,7 +6,7 @@ date: '2024-01-07'
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm,extraDistr,flextable, faux)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr,patchwork, gamlss,truncnorm,extraDistr,flextable, faux, bayestestR)
 
 ```
 
@@ -17,12 +17,11 @@ sims = 100
 measure_error = 0.5
 
 dat <- rnorm_multi(n = sims, 
-                  mu = c(0, 0),
-                  sd = c(1, 1),
+                  mu = c(5, 5),
+                  sd = c(2, 2),
                   r = c(0.7), 
                   varnames = c("a", "b"),
                   empirical = FALSE)
-
 
 dat %>% ggplot(aes(x = a,y = b))+
   geom_point()+
@@ -78,12 +77,11 @@ data.frame(fit$summary(c("mua","mub"))) %>%
     geom_pointrange(aes(x = mean_mua, y = mean_mub, ymax = q5_mub, ymin = q95_mub))
   
 
-fit$summary("r")
 
-fit$summary("corr")
+fit$summary("correlation")
 
 
-as_draws_df(fit$draws("corr"))%>% select(-contains(".")) %>% 
+as_draws_df(fit$draws("correlation"))%>% select(-contains(".")) %>% 
   pivot_longer(everything()) %>% 
   ggplot(aes(x = value))+
   geom_histogram(col = "black")+
@@ -102,6 +100,7 @@ hier = data.frame(fit$summary(c("mua","mub"))) %>%
 
 dat = dat %>% mutate(sda = 0.3, sdb = 0.3)%>% mutate(model = F)
 
+
 hier %>% ggplot(aes(col = model))+
   geom_pointrange(aes(x = mean_mua, xmin = q5_mua, xmax = q95_mua, y = mean_mub))+
   geom_pointrange(aes(x = mean_mua, ymin = q5_mub, ymax = q95_mub, y = mean_mub))+
@@ -111,8 +110,7 @@ hier %>% ggplot(aes(col = model))+
 
 
 ```{r}
-mod = cmdstanr::cmdstan_model(here::here("play with multinormal.stan"))
-
+mod = cmdstanr::cmdstan_model(here::here("play with multinonmial.stan"))
 
 fit <- mod$sample(
     data = data_stan,
@@ -134,7 +132,7 @@ data.frame(fit$summary(c("mua","mub"))) %>%
     geom_pointrange(aes(x = mean_mua, y = mean_mub, ymax = q5_mub, ymin = q95_mub))
   
 
-fit$summary("r")
+fit$summary("correlation")
 
 fit$summary("corr")
 
@@ -167,4 +165,275 @@ hier %>% ggplot(aes(col = model))+
 
 
 ```
+
+
+
+```{r}
+
+get_corr = function(parameters){
+  sims = parameters$sims
+  measure_error = parameters$me
+  correlation_real = 0
+  
+  while(!(correlation_real < parameters$sim_cor+0.01 & correlation_real > parameters$sim_cor-0.01)){
+    dat <- rnorm_multi(n = sims, 
+                      mu = c(0, 0),
+                      sd = c(10, 10),
+                      r = c(parameters$sim_cor), 
+                      varnames = c("a", "b"),
+                      empirical = FALSE)
+    correlation_real = cor.test(dat$a, dat$b)$estimate
+  }
+  
+  
+  # Use rowwise() and mutate() to simulate values for each row
+  a = dat %>% 
+    mutate(sda = 10, sdb = 10, id = 1:nrow(.))%>%
+    rowwise() %>%
+    mutate(sima = list(rnorm(100,rnorm(100,a,measure_error*10), sda)),
+           simb = list(rnorm(100,rnorm(100,b,measure_error*10), sdb)))
+  
+  # Unnest the list column to get the simulated values in separate rows
+  simulated_df <- a %>%
+    unnest(cols = c(sima, simb)) 
+  
+  
+  data_stan = list(N = nrow(simulated_df),
+                   n_points = length(unique(simulated_df$id)),
+                   sima = simulated_df$sima,
+                   simb = simulated_df$simb,
+                   id = simulated_df$id)
+  
+  mod = cmdstanr::cmdstan_model(here::here("play with correlations.stan"))
+  
+  
+  fit <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      init = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  no_uncertainty_cor = cor.test(dat$a, dat$b)
+  
+  mean_no_uncertainty = no_uncertainty_cor$estimate[[1]]
+  q5_no_uncertainty = no_uncertainty_cor$conf.int[[1]]
+  q95_no_uncertainty = no_uncertainty_cor$conf.int[[2]]
+  
+  
+  data = data.frame(fit$summary("correlation")) %>% mutate(id = parameters$id,
+                                                    sims = parameters$sims,
+                                                    measure_error = parameters$me,
+                                                    real_cor = parameters$sim_cor,
+                                                    no_uncertainty_cor = mean_no_uncertainty,
+                                                    no_uncertainty_corq5 = q5_no_uncertainty,
+                                                    no_uncertainty_corq95 = q95_no_uncertainty)
+
+  return(list(data))
+  
+  }
+
+
+aa = get_corr(parameters = data.frame(sims = 100,
+                        me = 1,
+                        sim_cor = 0.3,
+                        id = 1))
+
+
+
+sims = 100
+me = seq(0,10,by = 1)
+sim_cor = seq(0,0.9,by = 0.1)
+replicate = 1
+
+parameters = expand.grid(sims = sims,
+                         me = me,
+                         sim_cor = sim_cor,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+
+data_list <- split(parameters, parameters$id)
+
+
+cores = availableCores()
+ 
+plan(multisession, workers = cores)
+  
+possfit_model = possibly(.f = get_corr, otherwise = "Error")
+ 
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+#load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
+
+
+results2 = results[results != "Error"]
+
+params = map_dfr(results2, 1)
+
+# df = data.frame()
+# 
+# for(i in 1:length(results2)){
+#   df = rbind(df,results2[[i]])
+#   
+# }
+#params = df
+
+params %>% ggplot()+
+  geom_pointrange(aes(x = real_cor, y = no_uncertainty_cor, ymin = no_uncertainty_corq5, ymax = no_uncertainty_corq95), col = "red")+
+  geom_pointrange(aes(x = real_cor, y = mean, ymin = q5, ymax = q95), col = "green")+
+  facet_wrap(~measure_error)
+  
+```
+
+```{r}
+
+
+
+
+get_corr_hier = function(parameters){
+  sims = parameters$sims
+  measure_error = parameters$me
+  correlation_real = 0
+  
+  while(!(correlation_real < parameters$sim_cor+0.01 & correlation_real > parameters$sim_cor-0.01)){
+    dat <- rnorm_multi(n = sims, 
+                      mu = c(0, 0),
+                      sd = c(10, 10),
+                      r = c(parameters$sim_cor), 
+                      varnames = c("a", "b"),
+                      empirical = FALSE)
+    correlation_real = cor.test(dat$a, dat$b)$estimate
+  }
+  
+  
+  # Use rowwise() and mutate() to simulate values for each row
+  a = dat %>% 
+    mutate(sda = 10, sdb = 10, id = 1:nrow(.))%>%
+    rowwise() %>%
+    mutate(sima = list(rnorm(100,rnorm(100,a,measure_error*10), sda)),
+           simb = list(rnorm(100,rnorm(100,b,measure_error*10), sdb)))
+  
+  # Unnest the list column to get the simulated values in separate rows
+  simulated_df <- a %>%
+    unnest(cols = c(sima, simb)) 
+  
+  
+  data_stan = list(N = nrow(simulated_df),
+                   n_points = length(unique(simulated_df$id)),
+                   sima = simulated_df$sima,
+                   simb = simulated_df$simb,
+                   id = simulated_df$id)
+  
+  
+  
+  mod = cmdstanr::cmdstan_model(here::here("play with multinonmial.stan"))
+
+  
+  fit <- mod$sample(
+      data = data_stan,
+      chains = 4,
+      refresh = 100,
+      init = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  
+  
+  
+  dd = as_draws_df(fit$draws("corr[2,1]"))%>% select(-contains(".")) %>% pivot_longer(everything())
+    
+  hdi = dd %>% bayestestR::hdi(.$value, ci = 0.95)
+  
+  hdi$mean = mean(dd$value)
+  
+  
+  no_uncertainty_cor = cor.test(dat$a, dat$b)
+  
+  mean_no_uncertainty = no_uncertainty_cor$estimate[[1]]
+  q5_no_uncertainty = no_uncertainty_cor$conf.int[[1]]
+  q95_no_uncertainty = no_uncertainty_cor$conf.int[[2]]
+  
+  
+  data = data.frame(fit$summary("correlation")) %>% mutate(id = parameters$id,
+                                                    sims = parameters$sims,
+                                                    measure_error = parameters$me,
+                                                    real_cor = parameters$sim_cor,
+                                                    no_uncertainty_cor = mean_no_uncertainty,
+                                                    no_uncertainty_corq5 = q5_no_uncertainty,
+                                                    no_uncertainty_corq95 = q95_no_uncertainty,
+                                                    hier_esti_mean = hdi$mean,
+                                                    hier_esti_q5 = hdi$CI_low,
+                                                    hier_esti_q95 = hdi$CI_high
+                                                    )
+
+  return(list(data))
+  
+  }
+
+
+# aa = get_corr_hier(parameters = data.frame(sims = 100,
+#                         me = 0.7,
+#                         sim_cor = 0.3,
+#                         id = 1))
+
+
+
+sims = 100
+me = seq(0,10,by = 1)
+sim_cor = seq(0,0.9,by = 0.1)
+replicate = 1
+
+
+parameters = expand.grid(sims = sims,
+                         me = me,
+                         sim_cor = sim_cor,
+                         replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+
+data_list <- split(parameters, parameters$id)
+
+
+cores = availableCores()
+ 
+plan(multisession, workers = cores)
+  
+possfit_model = possibly(.f = get_corr_hier, otherwise = "Error")
+ 
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+
+#load(here::here("report","DDM","Workspace","DDM parameterrecovery.RData"))
+
+
+results2 = results[results != "Error"]
+
+params = map_dfr(results2, 1)
+
+# df = data.frame()
+# 
+# for(i in 1:length(results2)){
+#   df = rbind(df,results2[[i]])
+#   
+# }
+#params = df
+
+params %>% ggplot()+
+  geom_pointrange(aes(x = real_cor, y = no_uncertainty_cor, ymin = no_uncertainty_corq5, ymax = no_uncertainty_corq95), col = "red")+
+  geom_pointrange(aes(x = real_cor, y = mean, ymin = q5, ymax = q95), col = "green")+
+  geom_pointrange(aes(x = real_cor, y = hier_esti_mean, ymin = hier_esti_q5, ymax = hier_esti_q95), col = "yellow")+
+  facet_wrap(~measure_error)
+
+
+params %>% ggplot()+
+  geom_pointrange(aes(x = real_cor, y = no_uncertainty_cor, ymin = no_uncertainty_corq5, ymax = no_uncertainty_corq95), col = "red")+
+  geom_pointrange(aes(x = real_cor, y = mean, ymin = q5, ymax = q95), col = "green")+
+  facet_wrap(~measure_error)
+  
+```
+
 
