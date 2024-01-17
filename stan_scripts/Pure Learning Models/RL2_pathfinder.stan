@@ -21,8 +21,6 @@ data {
 
 parameters {
 
-
-
   real<lower=0> zeta;  // boundary separation
   real <lower =0, upper = 1> lr;
 
@@ -51,9 +49,9 @@ transformed parameters{
 model {
   
   
-  target += beta_proportion_lpdf(lr | 0.3,5);
+  target += beta_lpdf(lr | 1,1);
   
-  target += normal_lpdf(zeta | 1, 20)-normal_lccdf(0 | 1, 20);
+  target += normal_lpdf(zeta | 1, 10)-normal_lccdf(0 | 1, 10);
   
     
   for(i in 1:trials){

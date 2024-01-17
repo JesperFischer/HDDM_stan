@@ -498,22 +498,22 @@ results2 = results[results != "Error"]
 ```
 
 
-```{r, fig.height=10, fig.width=10}
-load(here::here("report","ERLDMM","workspace.RData"))
+```{r, fig.height=7, fig.width=10}
+load(here::here("report","ERLDMM","parameter_recovery.RData"))
 
 
 params = map_dfr(results2, 1)
 
 params %>% filter(variable == "alpha") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_alpha)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_alpha))+
   facet_wrap(~trials)+coord_cartesian(ylim = c(0,50))
 
 params %>% filter(variable == "delta") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_delta)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_delta))+
   facet_wrap(~trials)+
@@ -521,7 +521,7 @@ params %>% filter(variable == "delta") %>%
 
 params %>% filter(variable == "tau") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_tau)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_tau))+
   facet_wrap(~trials)
@@ -529,14 +529,14 @@ params %>% filter(variable == "tau") %>%
 
 params %>% filter(variable == "beta") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_beta)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_beta))+
   facet_wrap(~trials)
 
 params %>% filter(variable == "lr") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_lr)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_lr))+
   facet_wrap(~trials)
@@ -544,16 +544,30 @@ params %>% filter(variable == "lr") %>%
 
 params %>% filter(variable == "nu") %>% 
   ggplot(aes(x = mean, fill = as.factor(real_nu)))+
-  geom_density(alpha = 0.5)+
+  geom_histogram(col = "black", alpha = 0.5)+
   theme_classic()+
   geom_vline(aes(xintercept = real_nu))+
+  facet_wrap(~trials)
+
+params %>% filter(variable == "sens_w") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_sens_w)))+
+  geom_histogram(col = "black", alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_sens_w))+
+  facet_wrap(~trials)
+
+params %>% filter(variable == "sens_c") %>% 
+  ggplot(aes(x = mean, fill = as.factor(real_sens_c)))+
+  geom_histogram(col = "black", alpha = 0.5)+
+  theme_classic()+
+  geom_vline(aes(xintercept = real_sens_c))+
   facet_wrap(~trials)
 
 
 ```
 
 
-```{r, fig.height=10, fig.width=10}
+```{r, fig.height=7, fig.width=10}
 
 params %>% 
   mutate_if(is.numeric, round, digits = 2) %>% 

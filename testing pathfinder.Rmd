@@ -7,7 +7,7 @@ date: "`r Sys.Date()`"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr)
+pacman::p_load(tidyverse,RWiener, tidybayes, posterior, furrr,gganimate, cmdstanr, brms, furrr,ggridges,truncnorm,flextable,patchwork,extraDistr,pracma )
 
 create_string <- function(i,n) {
   result <- c()  # Initialize an empty character vector
@@ -26,8 +26,482 @@ result_string <- create_string(i,3)
 result_string
 
 
+get_entropy = function(trials,us,resps,un,rn){
+    
+      data_stan = list(trials = trials+length(un),
+                   u = c(us,un),
+                   resp = c(resps,rn))
+  
+      fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+      
+      
+      hist_data_lr = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = seq(0,1,by = 0.01), plot = FALSE)
+      
+      
+      hist_data_zeta = hist(as_draws_df(fit_rl$draws(c("zeta"))) %>% .$zeta, breaks = seq(0,100,by = 1), plot = FALSE)
+      
+      
+      probabilities_lr <- hist_data_lr$counts / sum(hist_data_lr$counts)
+      
+      probabilities_zeta <- hist_data_zeta$counts / sum(hist_data_zeta$counts)
+      
+      
+      epsilon <- 1e-16
+      probabilities_lr <- pmax(probabilities_lr, epsilon)
+      
+      probabilities_zeta <- pmax(probabilities_zeta, epsilon)
+    
+      probabilities = probabilities_lr * probabilities_zeta
+      # Calculate entropy from the histogram Want to minimize this i guess?
+      return(-sum(probabilities * log(probabilities)))
+  }
+  
+
+
+get_entropy2 = function(v){
+  
+  hist = hist(v, breaks = seq(-10,10,by = 0.1), plot = FALSE)
+  probabilities <- hist$counts / sum(hist$counts)
+  epsilon <- 1e-16
+  probabilities <- pmax(probabilities, epsilon)
+  return(-sum(probabilities * log(probabilities)))
+
+}
+
+
+get_next_conting = function(resps,us,trials, lookahead, un, rn){
+      
+    
+  
+    u1r0 = get_entropy(trials,us,resps, un = 1, rn = 0)
+    u1r1 = get_entropy(trials,us,resps, un = 1, rn = 1)
+  
+    u0r0 = get_entropy(trials,us,resps, un = 0, rn = 0)
+    u0r1 = get_entropy(trials,us,resps, un = 0, rn = 1)
+  
+    
+    u1 = sum(u1r0,u1r1)/2
+    u0 = sum(u0r0,u0r1)/2
+   
+    if(u1 < u0){
+      return(list(1,u1))
+    }else if(u0 < u1){
+      return(list(0,u0))
+    }else{
+      return(list(sample(0:1,1)),u1)
+    }
+}
+
+
+get_next_conting2 = function(resps,us,trials){
+      
+    
+  
+    u11r11 = get_entropy(trials,us,resps, un = c(1,1), rn = c(1,1))
+    u11r00 = get_entropy(trials,us,resps, un = c(1,1), rn = c(0,0))
+    u11r10 = get_entropy(trials,us,resps, un = c(1,1), rn = c(1,0))
+    u11r01 = get_entropy(trials,us,resps, un = c(1,1), rn = c(0,1))
+
+    u11 = sum(u11r11,u11r00,u11r10,u11r01)/4
+
+    
+    u00r11 = get_entropy(trials,us,resps, un = c(0,0), rn = c(1,1))
+    u00r00 = get_entropy(trials,us,resps, un = c(0,0), rn = c(0,0))
+    u00r10 = get_entropy(trials,us,resps, un = c(0,0), rn = c(1,0))
+    u00r01 = get_entropy(trials,us,resps, un = c(0,0), rn = c(0,1))
+
+    u00 = sum(u00r11,u00r00,u00r10,u00r01)/4
+    
+    u10r11 = get_entropy(trials,us,resps, un = c(1,0), rn = c(1,1))
+    u10r00 = get_entropy(trials,us,resps, un = c(1,0), rn = c(0,0))    
+    u10r10 = get_entropy(trials,us,resps, un = c(1,0), rn = c(1,0))
+    u10r01 = get_entropy(trials,us,resps, un = c(1,0), rn = c(0,1))
+
+    u10 = sum(u10r11,u10r00,u10r10,u10r01)/4
+    
+        
+    u01r11 = get_entropy(trials,us,resps, un = c(1,0), rn = c(1,1))
+    u01r00 = get_entropy(trials,us,resps, un = c(1,0), rn = c(0,0))    
+    u01r10 = get_entropy(trials,us,resps, un = c(1,0), rn = c(1,0))
+    u01r01 = get_entropy(trials,us,resps, un = c(1,0), rn = c(0,1))
+    
+  
+    u01 = sum(u01r11,u01r00,u01r10,u01r01)/4
+    
+    conting = c(
+    u11 = u11,
+    u00 = u00,
+    u10 = u10,
+    u01 = u01
+    )
+    
+    which(conting == min(conting))[[1]]
+    
+    names(conting)[[which(conting == min(conting))[[1]]]]
+    
+    u1 = str_sub(names(conting)[[which(conting == min(conting))[[1]]]], 2,2)
+    u2 = str_sub(names(conting)[[which(conting == min(conting))[[1]]]], 3,3)
+    
+      return(as.numeric(c(u1,u2)))
+}
+
+
 ```
 
+
+```{r}
+fit_pathfinder_n2 = function(parameters){
+  
+  N = parameters$N
+  lr = parameters$lr
+  zeta = parameters$zeta
+  e = array(NA,N+1)
+  u = array(NA,N)
+  u2 = data.frame()
+  u1 = data.frame()
+  
+  r = array(NA,N)
+  entropy = array(NA,N)
+  calc_entropy = array(NA,N)
+  
+  t_test = 10
+  
+  e[1] = 0.5
+  
+  u[1:(t_test/2)] = 1
+  u[(t_test/2):t_test] = 0
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
+  
+  parm_ev = data.frame()
+
+  for(i in 1:t_test){  
+    e[i+1] = e[i]+lr*(u[i]-e[i])
+    r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+
+  }
+  
+  
+  i = (t_test+1)
+for(i in (t_test+1):N){
+  
+  if(is.na(u[i])){
+    data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                     u = data.frame(u) %>% drop_na() %>% .$u,
+                     resp = data.frame(r) %>% drop_na() %>% .$r)
+    
+    fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+  
+    hist_data = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = 100, plot = FALSE)
+    
+    probabilities <- hist_data$counts / sum(hist_data$counts)
+    
+    epsilon <- 1e-16
+    probabilities <- pmax(probabilities, epsilon)
+  
+  
+    # Calculate entropy from the histogram Want to minimize this i guess?
+    entropy[i] <- -sum(probabilities * log(probabilities))
+    
+    
+  
+    resps = data.frame(r) %>% drop_na() %>% .$r
+    us = data.frame(u) %>% drop_na() %>% .$u
+    trials = nrow((data.frame(r) %>% drop_na()))
+    
+   
+    entro = get_next_conting2(resps,us,trials)
+    
+    u1 = rbind(u1, entro[[1]])
+    u[i] = entro[[1]]
+    u[i+1] = entro[[2]]
+  }else{
+    fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+  
+    hist_data = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = 100, plot = FALSE)
+    
+    probabilities <- hist_data$counts / sum(hist_data$counts)
+    
+    epsilon <- 1e-16
+    probabilities <- pmax(probabilities, epsilon)
+  
+  
+    # Calculate entropy from the histogram Want to minimize this i guess?
+    entropy[i] <- -sum(probabilities * log(probabilities))
+  }
+  
+  #calc_entropy[i] = entro[[2]]
+  
+
+  
+  c_trial = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(parm_ev, c_trial)
+  
+  e[i+1] = e[i]+lr*(u[i]-e[i])
+  r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+  
+}
+
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 u = data.frame(u) %>% drop_na() %>% .$u,
+                 resp = data.frame(r) %>% drop_na() %>% .$r)
+
+
+fit_rl <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(u = u,
+                      e = e[1:N],
+                      r = r,
+                      id = parameters$id,
+                      real_lr = lr,
+                      real_zeta = zeta,
+                      entropy = entropy,
+                      calc_entropy = calc_entropy,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+# df_trial %>% mutate(u = ifelse(u==1,1.05,0.05)) %>% 
+#   ggplot()+geom_point(aes(x = trials, y = u), col = "green")+
+#   geom_point(aes(x = trials, y = r), col = "red")+
+#   geom_line(aes(x = trials, y = e))
+
+df_subj = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(real_lr = lr,
+                                                      real_zeta = zeta,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+real_lr = 0.3
+real_zeta = 5
+N = 50
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
+
+
+test = fit_pathfinder_n2(parameters = data.frame(lr = real_lr,
+                                       zeta = real_zeta,
+                                       N = 50,
+                                       id = 1,
+                                       replicate = 1)
+                      )
+
+
+
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u), col = "green")+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
+
+calc_lr = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+  geom_abline(intercept = real_lr, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "lr"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+calc_zeta = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+  geom_abline(intercept = real_zeta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "zeta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+p1 = test[[2]] %>% ggplot(aes(x = trials,y = entropy))+geom_point()
+
+p2 = test[[2]] %>% ggplot(aes(x = trials,y = calc_entropy))+geom_point()
+
+
+p2/calc_lr/calc_zeta
+
+p1/calc_lr/calc_zeta
+
+```
+
+
+
+```{r}
+fit_pathfinder_n1 = function(parameters){
+  
+  N = parameters$N
+  lr = parameters$lr
+  zeta = parameters$zeta
+  e = array(NA,N+1)
+  u = array(NA,N)
+  u2 = data.frame()
+  u1 = data.frame()
+  
+  r = array(NA,N)
+  entropy = array(NA,N)
+  calc_entropy = array(NA,N)
+  
+  t_test = 10
+  
+  e[1] = 0.5
+  
+  u[1:(t_test/2)] = 1
+  u[(t_test/2):t_test] = 0
+  
+  mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
+  
+  parm_ev = data.frame()
+
+  for(i in 1:t_test){  
+    e[i+1] = e[i]+lr*(u[i]-e[i])
+    r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+
+  }
+  
+  
+  i = (t_test+1)
+for(i in (t_test+1):N){
+  
+
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   u = data.frame(u) %>% drop_na() %>% .$u,
+                   resp = data.frame(r) %>% drop_na() %>% .$r)
+  
+  fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  sum = fit_rl$summary("lr")
+  
+  hist_data = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = 100, plot = FALSE)
+  
+  probabilities <- hist_data$counts / sum(hist_data$counts)
+  
+  epsilon <- 1e-16
+  probabilities <- pmax(probabilities, epsilon)
+
+
+  # Calculate entropy from the histogram Want to minimize this i guess?
+  entropy[i] <- -sum(probabilities * log(probabilities))
+  
+  
+
+  resps = data.frame(r) %>% drop_na() %>% .$r
+  us = data.frame(u) %>% drop_na() %>% .$u
+  trials = nrow((data.frame(r) %>% drop_na()))
+  
+ 
+  entro = get_next_conting(resps,us,trials)
+  
+  u1 = rbind(u1, entro[[1]])
+  u[i] = entro[[1]]
+  
+  calc_entropy[i] = entro[[2]]
+  
+
+  
+  c_trial = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(parm_ev, c_trial)
+  
+  e[i+1] = e[i]+lr*(u[i]-e[i])
+  r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
+  
+}
+
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 u = data.frame(u) %>% drop_na() %>% .$u,
+                 resp = data.frame(r) %>% drop_na() %>% .$r)
+
+
+fit_rl <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(u = u,
+                      e = e[1:N],
+                      r = r,
+                      id = parameters$id,
+                      real_lr = lr,
+                      real_zeta = zeta,
+                      entropy = entropy,
+                      calc_entropy = calc_entropy,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+# df_trial %>% mutate(u = ifelse(u==1,1.05,0.05)) %>% 
+#   ggplot()+geom_point(aes(x = trials, y = u), col = "green")+
+#   geom_point(aes(x = trials, y = r), col = "red")+
+#   geom_line(aes(x = trials, y = e))
+
+df_subj = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(real_lr = lr,
+                                                      real_zeta = zeta,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+real_lr = 0.3
+real_zeta = 5
+N = 50
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
+
+
+test = fit_pathfinder_n1(parameters = data.frame(lr = real_lr,
+                                       zeta = real_zeta,
+                                       N = 50,
+                                       id = 1,
+                                       replicate = 1)
+                      )
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u), col = "green")+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
+
+calc_lr = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+  geom_abline(intercept = real_lr, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "lr"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+calc_zeta = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+  geom_abline(intercept = real_zeta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "zeta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+p1 = test[[2]] %>% ggplot(aes(x = trials,y = entropy))+geom_point()
+
+p2 = test[[2]] %>% ggplot(aes(x = trials,y = calc_entropy))+geom_point()
+
+
+p2/calc_lr/calc_zeta
+
+p1/calc_lr/calc_zeta
+```
+
+
+# RL Task (not cleaned)
 
 ```{r}
 fit_pathfinder = function(parameters){
@@ -38,6 +512,8 @@ zeta = parameters$zeta
 e = array(NA,N+1)
 u = array(NA,N)
 r = array(NA,N)
+entropy = array(NA,N)
+calc_entropy = array(NA,N)
 
 t_test = 2
 
@@ -67,35 +543,94 @@ for(i in 1:N){
   
   fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
   
-  # fit_rl <- mod$sample(
-  #   data = data_stan,
-  #   chains = 4,
-  #   parallel_chains = 4,
-  #   adapt_delta = 0.9,
-  #   max_treedepth = 12,
-  #   refresh = 500
-  # )
+  sum = fit_rl$summary("lr")
   
-  if(last_nn > i){
-    last_n = i
-  }else{
-    last_n = last_nn
+  hist_data = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = 100, plot = FALSE)
+  
+  probabilities <- hist_data$counts / sum(hist_data$counts)
+  
+  epsilon <- 1e-10
+  probabilities <- pmax(probabilities, epsilon)
+
+
+  # Calculate entropy from the histogram Want to minimize this i guess?
+  entropy[i] <- -sum(probabilities * log(probabilities))
+  
+  
+  get_entropy = function(trials,us,resps,un,rn){
+    
+      data_stan = list(trials = trials+length(un),
+                   u = c(us,un),
+                   resp = c(resps,rn))
+  
+      fit_rl <- mod$pathfinder(data = data_stan,refresh=0)
+      
+      
+      hist_data_lr = hist(as_draws_df(fit_rl$draws(c("lr"))) %>% .$lr, breaks = seq(0,1,by = 0.01), plot = FALSE)
+      
+      
+      hist_data_zeta = hist(as_draws_df(fit_rl$draws(c("zeta"))) %>% .$zeta, breaks = seq(0,100,by = 1), plot = FALSE)
+      
+      
+      probabilities_lr <- hist_data_lr$counts / sum(hist_data_lr$counts)
+      
+      probabilities_zeta <- hist_data_zeta$counts / sum(hist_data_zeta$counts)
+      
+      
+      epsilon <- 1e-16
+      probabilities_lr <- pmax(probabilities_lr, epsilon)
+      
+      probabilities_zeta <- pmax(probabilities_zeta, epsilon)
+    
+      probabilities = probabilities_lr * probabilities_zeta
+      # Calculate entropy from the histogram Want to minimize this i guess?
+      return(-sum(probabilities * log(probabilities)))
   }
   
+  resps = data.frame(r) %>% drop_na() %>% .$r
+  us = data.frame(u) %>% drop_na() %>% .$u
+  trials = nrow((data.frame(r) %>% drop_na()))
   
-  sum_expect_lastn_high = sum(fit_rl$summary(create_string(i,last_n)) %>% .$mean > threshhold)
-  sum_expect_lastn_low = sum(fit_rl$summary(create_string(i,last_n)) %>% .$mean < (1-threshhold))
+  get_next_conting = function(resps,us,trials, lookahead, un, rn){
+      
+    
   
-  if(sum_expect_lastn_high >= above_threshhold){
-    u[i] = 0
-  }else if(sum_expect_lastn_low >= above_threshhold){
-    u[i] = 1
-  }else{
-    u[i] = u[i-1]
+    u1r0 = get_entropy(trials,us,resps, un = 1, rn = 0)
+    u1r1 = get_entropy(trials,us,resps, un = 1, rn = 1)
+  
+    u0r0 = get_entropy(trials,us,resps, un = 0, rn = 0)
+    u0r1 = get_entropy(trials,us,resps, un = 0, rn = 1)
+  
+    
+    u1 = sum(u1r0,u1r1)/2
+    u0 = sum(u0r0,u0r1)/2
+   
+    if(u1 < u0){
+      return(list(1,u1))
+    }else if(u0 < u1){
+      return(list(0,u0))
+    }else{
+      return(list(sample(0:1,1)),u1)
+    }
   }
-  if(i %in% catch_trials){
-    u[i] = 1-u[i]
-  }
+  
+  # lookahead = 2
+  # u = c(0,1)
+  # r = c(0,1)
+  # 
+  # # Combine the results
+  # all_combinations <- expand.grid(trials,u,r)
+  # 
+  # un = all_combinations$Var2
+  # rn = all_combinations$Var3
+  
+  entro = get_next_conting(resps,us,trials)
+  
+  u[i] = entro[[1]]
+  
+  calc_entropy[i] = entro[[2]]
+  
+
   
   c_trial = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(trials = i)
   
@@ -104,9 +639,21 @@ for(i in 1:N){
   e[i+1] = e[i]+lr*(u[i]-e[i])
   r[i] = rbinom(1,1,(e[i]^zeta)/((e[i]^zeta)+(1-e[i])^zeta))
   
+  #entropy
+  
 }
 
-  
+
+p1 = df_trial %>% ggplot(aes(x = 1:N,y = entropy))+geom_point()
+
+p2 = parm_ev %>% filter(variable == "lr") %>% ggplot()+geom_pointrange(aes(x = 1:(N-2), y = median, ymin = q5, ymax = q95))+geom_hline(yintercept = parameters$lr)
+
+p3 = parm_ev %>% filter(variable == "zeta") %>% ggplot()+geom_pointrange(aes(x = 1:(N-2), y = median, ymin = q5, ymax = q95))+geom_hline(yintercept = parameters$zeta)
+
+p1/p2/p3 
+
+
+
 data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
                  u = data.frame(u) %>% drop_na() %>% .$u,
                  resp = data.frame(r) %>% drop_na() %>% .$r)
@@ -130,10 +677,17 @@ parm_ev = parm_ev %>%
 df_trial = data.frame(u = u,
                       e = e[1:N],
                       r = r,
+                      entropy = entropy,
+                      calc_entropy = calc_entropy,
                       trials = 1:N)
 
 df_trial = full_join(parm_ev,df_trial)
 
+
+df_trial %>% mutate(u = ifelse(u==1,1.05,0.05)) %>% 
+  ggplot()+geom_point(aes(x = trials, y = u), col = "green")+
+  geom_point(aes(x = trials, y = r), col = "red")+
+  geom_line(aes(x = trials, y = e))
 
 df_subj = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(last_n = last_nn,
                                                       real_lr = lr,
@@ -145,8 +699,20 @@ df_subj = data.frame(fit_rl$summary(c("lr","zeta"))) %>% mutate(last_n = last_nn
 return(list(df_subj,df_trial,catch_trials))
 }
 
-real_lr = 0.1
-real_zeta = 5
+real_lr = 0.3
+real_zeta = 2
+N = 50
+
+parameters = data.frame(last_nn = 2,
+                                       lr = real_lr,
+                                       n_catch = 10,
+                                       threshhold = 0.8,
+                                       above_threshhold = 2,
+                                       zeta = real_zeta,
+                                       N = 50,
+                                       id = 1,
+                                       replicate = 1)
+
 
 test = fit_pathfinder(parameters = data.frame(last_nn = 2,
                                        lr = real_lr,
@@ -160,18 +726,29 @@ test = fit_pathfinder(parameters = data.frame(last_nn = 2,
 
 
 
-test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u))+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
+test[[2]] %>% ggplot() + geom_point(aes(x = trials, y = u), col = "green")+geom_line(aes(x = trials, y = e))+geom_point(aes(x = trials, y = r-0.05, col ="red"))
 
-test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+calc_lr = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
   geom_abline(intercept = real_lr, slope = 0)+
   geom_pointrange(data = test[[1]] %>% filter(variable == "lr"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
 
-test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+calc_zeta = test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
   geom_abline(intercept = real_zeta, slope = 0)+
   geom_pointrange(data = test[[1]] %>% filter(variable == "zeta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
 
 
+p1 = df_trial %>% ggplot(aes(x = trials,y = entropy))+geom_point()
 
+p2 = df_trial %>% ggplot(aes(x = trials,y = calc_entropy))+geom_point()
+
+
+p2/calc_lr/calc_zeta
+
+```
+
+
+
+```{r}
 real_lr = 0.4
 real_zeta = 10
 
@@ -201,21 +778,18 @@ test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q
 
 
 ```{r}
-N = 50
+N = 100
 
-last_nn = seq(1,20,by = 5)
+lr = seq(0.1,0.5, by = 0.1)
 
-lr = seq(0.1,0.8, by = 0.1)
+zeta = seq(1,10,by = 2)
 
-zeta = seq(1,10,by = 5)
-
-replicate = 1:25
+replicate = 1
 
 
 params = expand.grid(N = N,
                      lr = lr,
                      zeta = zeta,
-                     last_nn = last_nn,
                      replicate = replicate) %>% 
   mutate(id = 1:nrow(.))
 
@@ -225,7 +799,7 @@ data_list <- split(params, params$id)
 
 # cores = availableCores()
 # 
-plan(multisession, workers = 3)
+plan(multisession, workers = 5)
 # 
 # 
 possfit_model = possibly(.f = fit_pathfinder, otherwise = "Error")
@@ -238,7 +812,41 @@ results <- future_map(data_list, ~possfit_model(.x),
                        .progress = TRUE,
                        .options = furrr_options(seed = TRUE))
 
-dd = map_dfr(results,rbind)
+dd = map_dfr(results,1)
+
+dr = map_dfr(results,2)
+
+
+
+
+
+
+
+
+dr %>% ggplot() + geom_point(aes(x = trials, y = u), col = "green")+
+  geom_line(aes(x = trials, y = e))+
+  geom_point(aes(x = trials, y = r-0.05, col ="red"))+
+  facet_grid(real_lr~real_zeta, labeller = label_both)
+
+
+
+dr %>% ggplot() + 
+  geom_pointrange(aes(x = trials, y = mean_lr, ymin = q5_lr, ymax = q95_lr))+
+  geom_line(aes(x = trials, y = real_lr), col = "red")+
+  facet_grid(real_lr~real_zeta, labeller = label_both)
+
+
+dr %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_zeta, ymin = q5_zeta, ymax = q95_zeta))+
+  geom_line(aes(x = trials, y = real_zeta), col = "red")+
+  facet_grid(real_lr~real_zeta, labeller = label_both)
+
+dr %>% ggplot(aes(x = trials,y = entropy))+geom_point()+
+  facet_grid(real_lr~real_zeta, labeller = label_both)
+
+dr %>% ggplot(aes(x = trials,y = calc_entropy))+geom_point()+
+  facet_grid(real_lr~real_zeta, labeller = label_both)
+
+
 ```
 
 
@@ -271,3 +879,849 @@ dd  %>% filter(variable == "lr") %>%  mutate(dif = mean-real_lr, q5 = q5-real_lr
 
 ```
 
+
+
+# Psychometric Task
+
+```{r}
+erf <- function(x) 2 * pnorm(x * sqrt(2)) - 1
+
+
+fit_pathfinder = function(parameters){
+
+N = parameters$N
+
+
+r = array(NA,N)
+p = array(NA,N)
+x = array(NA,N)
+
+parm_ev = data.frame()
+
+t_test = 5
+
+if(parameters$stim == "warm"){
+  
+  x[1:t_test] = seq(30,50,length.out = 5)
+}else if(parameters$stim == "cold"){
+  x[1:t_test] = seq(0,30,length.out = 5)
+}
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","psy","psy.stan"))
+
+for(i in 1:N){
+  if(i <= t_test){  
+    p[i] = parameters$psy_gamma + (1 - parameters$psy_gamma - parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+    r[i] = rbinom(1,1,p[i])
+    
+    next
+  }
+  
+
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   x = data.frame(x) %>% drop_na() %>% .$x,
+                   r = data.frame(r) %>% drop_na() %>% .$r,
+                   stim = 1)
+  
+  fit_psy <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  c_trial = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(c_trial,parm_ev)
+  
+  if(i < 10){
+    x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+  }else{
+    sign = sample(c(-1,1),1)
+    x[i] = fit_psy$draws("psy_alpha")[1]+sign*fit_psy$draws("psy_beta")[1]
+  }
+  p[i] = parameters$psy_gamma + (1 - parameters$psy_gamma - parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+  r[i] = rbinom(1,1,p[i])
+    
+  
+  
+
+}
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 x = data.frame(x) %>% drop_na() %>% .$x,
+                 r = data.frame(r) %>% drop_na() %>% .$r,
+                 stim = 1)
+
+fit_psy <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(x = x,
+                      p = p,
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+df_subj = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% 
+                                                      mutate(
+                                                      real_psy_alpha = parameters$psy_alpha,
+                                                      real_psy_beta = parameters$psy_beta,
+                                                      real_psy_lambda = parameters$psy_lambda,
+                                                      real_psy_gamma = parameters$psy_gamma,
+                                                      stim = parameters$stim,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+real_psy_alpha = 44
+real_psy_beta = 5
+real_psy_lambda = 0.05
+real_psy_gamma = 0.05
+stim = "warm"
+N = 50
+
+test = fit_pathfinder(parameters = data.frame(psy_alpha = real_psy_alpha,
+                                       psy_beta = real_psy_beta,
+                                       stim = stim,
+                                       psy_lambda = real_psy_lambda,
+                                       psy_gamma = real_psy_gamma,
+                                       N = N,
+                                       id = 1,
+                                       replicate = 1))
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = x, y = r))+geom_line(aes(x = x, y = p))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_alpha, ymin = q5_psy_alpha, ymax = q95_psy_alpha))+
+  geom_abline(intercept = real_psy_alpha, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_alpha"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_beta, ymin = q5_psy_beta, ymax = q95_psy_beta))+
+  geom_abline(intercept = real_psy_beta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_beta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_gamma, ymin = q5_psy_gamma, ymax = q95_psy_gamma))+
+  geom_abline(intercept = real_psy_gamma, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_gamma"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_lambda, ymin = q5_psy_lambda, ymax = q95_psy_lambda))+
+  geom_abline(intercept = real_psy_lambda, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_lambda"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+```
+
+
+# xaver
+
+```{r}
+fit_pathfinder_static = function(parameters){
+
+N = parameters$N
+
+
+r = array(NA,N)
+p = array(NA,N)
+x = array(NA,N)
+
+parm_ev = data.frame()
+
+t_test = 5
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","psy","psy_xav.stan"))
+
+for(i in 1:N){
+  x[i] = rnorm(1,parameters$psy_alpha, 5)
+  p[i] = parameters$psy_gamma + (1 - parameters$psy_gamma - parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+  r[i] = rbinom(1,1,p[i])
+
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   x = data.frame(x) %>% drop_na() %>% .$x,
+                   r = data.frame(r) %>% drop_na() %>% .$r)
+  
+  fit_psy <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  c_trial = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(c_trial,parm_ev)
+
+
+    
+  
+  
+
+}
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 x = data.frame(x) %>% drop_na() %>% .$x,
+                 r = data.frame(r) %>% drop_na() %>% .$r)
+
+fit_psy <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(x = x,
+                      p = p,
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+df_subj = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% 
+                                                      mutate(
+                                                      real_psy_alpha = parameters$psy_alpha,
+                                                      real_psy_beta = parameters$psy_beta,
+                                                      real_psy_lambda = parameters$psy_lambda,
+                                                      real_psy_gamma = parameters$psy_gamma,
+                                                      stim = parameters$stim,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+
+
+real_psy_alpha = -9
+real_psy_beta = 5
+real_psy_lambda = 0.05
+real_psy_gamma = 0.05
+N = 120
+
+test = fit_pathfinder_static(parameters = data.frame(psy_alpha = real_psy_alpha,
+                                       psy_beta = real_psy_beta,
+                                       psy_lambda = real_psy_lambda,
+                                       psy_gamma = real_psy_gamma,
+                                       N = N,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = x, y = r))+geom_line(aes(x = x, y = p))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_alpha, ymin = q5_psy_alpha, ymax = q95_psy_alpha))+
+  geom_abline(intercept = real_psy_alpha, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_alpha"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_beta, ymin = q5_psy_beta, ymax = q95_psy_beta))+
+  geom_abline(intercept = real_psy_beta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_beta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_gamma, ymin = q5_psy_gamma, ymax = q95_psy_gamma))+
+  geom_abline(intercept = real_psy_gamma, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_gamma"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_lambda, ymin = q5_psy_lambda, ymax = q95_psy_lambda))+
+  geom_abline(intercept = real_psy_lambda, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_lambda"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+```
+
+# xaver dynmaic
+```{r}
+
+fit_pathfinder_static_v2 = function(parameters){
+
+N = parameters$N
+
+
+r = array(NA,N)
+p = array(NA,N)
+x = array(NA,N)
+
+parm_ev = data.frame()
+
+x[1] = -5
+p[1] = parameters$psy_lambda + (1 - 2 * parameters$psy_lambda) * (0.5+0.5*erf((x[1]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+r[1] = rbinom(1,1,p[1])
+
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","psy","psy_xav.stan"))
+
+for(i in 1:N){
+
+  
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   x = data.frame(x) %>% drop_na() %>% .$x,
+                   r = data.frame(r) %>% drop_na() %>% .$r)
+  
+  fit_psy <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  if(i < 10){
+    x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+  }else{
+    sign = sample(c(-1,1),1)
+    x[i] = fit_psy$draws("psy_alpha")[1]+sign*fit_psy$draws("psy_beta")[1]
+  }
+  
+  
+  
+  c_trial = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(c_trial,parm_ev)
+  p[i] = parameters$psy_lambda + (1 - 2 * parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+  r[i] = rbinom(1,1,p[i])
+
+
+    
+  
+  
+
+}
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 x = data.frame(x) %>% drop_na() %>% .$x,
+                 r = data.frame(r) %>% drop_na() %>% .$r)
+
+fit_psy <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(x = x,
+                      p = p,
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+df_subj = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% 
+                                                      mutate(
+                                                      real_psy_alpha = parameters$psy_alpha,
+                                                      real_psy_beta = parameters$psy_beta,
+                                                      real_psy_lambda = parameters$psy_lambda,
+                                                      real_psy_gamma = parameters$psy_gamma,
+                                                      stim = parameters$stim,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+
+
+
+
+real_psy_alpha = -9
+real_psy_beta = 5
+real_psy_lambda = 0.05
+real_psy_gamma = 0.05
+N = 120
+
+test = fit_pathfinder_static_v2(parameters = data.frame(psy_alpha = real_psy_alpha,
+                                       psy_beta = real_psy_beta,
+                                       psy_lambda = real_psy_lambda,
+                                       psy_gamma = real_psy_gamma,
+                                       N = N,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = x, y = r))+geom_line(aes(x = x, y = p))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_alpha, ymin = q5_psy_alpha, ymax = q95_psy_alpha))+
+  geom_abline(intercept = real_psy_alpha, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_alpha"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_beta, ymin = q5_psy_beta, ymax = q95_psy_beta))+
+  geom_abline(intercept = real_psy_beta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_beta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_gamma, ymin = q5_psy_gamma, ymax = q95_psy_gamma))+
+  geom_abline(intercept = real_psy_gamma, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_gamma"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_lambda, ymin = q5_psy_lambda, ymax = q95_psy_lambda))+
+  geom_abline(intercept = real_psy_lambda, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_lambda"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+```
+
+```{r}
+
+fit_pathfinder_static_v3 = function(parameters){
+
+N = parameters$N
+
+
+r = array(NA,N)
+p = array(NA,N)
+x = array(NA,N)
+
+parm_ev = data.frame()
+
+x[1] = -5
+p[1] = parameters$psy_lambda + (1 - 2 * parameters$psy_lambda) * (0.5+0.5*erf((x[1]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+r[1] = rbinom(1,1,p[1])
+
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","psy","psy_xav.stan"))
+
+for(i in 1:N){
+
+  
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   x = data.frame(x) %>% drop_na() %>% .$x,
+                   r = data.frame(r) %>% drop_na() %>% .$r)
+  
+  fit_psy <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  if(i < 10){
+    x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+  }else{
+    sign = sample(c(-1,1),1)
+    x[i] = fit_psy$draws("psy_alpha")[1]+sign*2*fit_psy$draws("psy_beta")[1]
+  }
+  
+  
+  
+  c_trial = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(c_trial,parm_ev)
+  p[i] = parameters$psy_lambda + (1 - 2 * parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+  r[i] = rbinom(1,1,p[i])
+
+
+    
+  
+  
+
+}
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 x = data.frame(x) %>% drop_na() %>% .$x,
+                 r = data.frame(r) %>% drop_na() %>% .$r)
+
+fit_psy <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(x = x,
+                      p = p,
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(parm_ev,df_trial)
+
+
+df_subj = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda"))) %>% 
+                                                      mutate(
+                                                      real_psy_alpha = parameters$psy_alpha,
+                                                      real_psy_beta = parameters$psy_beta,
+                                                      real_psy_lambda = parameters$psy_lambda,
+                                                      real_psy_gamma = parameters$psy_gamma,
+                                                      stim = parameters$stim,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+return(list(df_subj,df_trial))
+}
+
+
+
+
+
+real_psy_alpha = -9
+real_psy_beta = 5
+real_psy_lambda = 0.05
+real_psy_gamma = 0.05
+N = 120
+
+test = fit_pathfinder_static_v3(parameters = data.frame(psy_alpha = real_psy_alpha,
+                                       psy_beta = real_psy_beta,
+                                       psy_lambda = real_psy_lambda,
+                                       psy_gamma = real_psy_gamma,
+                                       N = N,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = x, y = r))+geom_line(aes(x = x, y = p))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_alpha, ymin = q5_psy_alpha, ymax = q95_psy_alpha))+
+  geom_abline(intercept = real_psy_alpha, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_alpha"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_beta, ymin = q5_psy_beta, ymax = q95_psy_beta))+
+  geom_abline(intercept = real_psy_beta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_beta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_gamma, ymin = q5_psy_gamma, ymax = q95_psy_gamma))+
+  geom_abline(intercept = real_psy_gamma, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_gamma"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_lambda, ymin = q5_psy_lambda, ymax = q95_psy_lambda))+
+  geom_abline(intercept = real_psy_lambda, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_lambda"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+```
+
+
+
+# compare
+```{r, fig.height=5,fig.width=10}
+
+library(tictoc)
+compare = function(parameters){
+  #static = fit_pathfinder_static(parameters)[[1]] %>% mutate(static = T)
+  dynamic1 = fit_pathfinder_static_v2(parameters)[[1]]%>% mutate(static = "dynamic1")
+  dynamic2 = fit_pathfinder_static_v3(parameters)[[1]]%>% mutate(static = "dynamic2")
+
+  return(list(rbind(dynamic1, dynamic2)))
+}
+
+sim = 100
+
+real_psy_alpha = rnorm(sim,-8,8)
+real_psy_beta = exp(rnorm(sim,2.26,0.14))
+real_psy_lambda = extraDistr::rprop(sim,100,0.03)
+
+N = 120
+
+replicate = 1
+
+# params = expand.grid(psy_alpha = real_psy_alpha,
+#                      psy_beta = real_psy_beta,
+#                      psy_lambda = real_psy_lambda,
+#                      psy_gamma = real_psy_gamma,
+#                      N = N,
+#                      replicate = replicate) %>% 
+#   mutate(id = 1:nrow(.))
+
+params = data.frame(psy_alpha = real_psy_alpha,
+                     psy_beta = real_psy_beta,
+                     psy_lambda = real_psy_lambda,
+                     N = N,
+                     replicate = replicate) %>% 
+  mutate(id = 1:nrow(.))
+
+data_list <- split(params, params$id)
+
+tic()
+#a = compare(data_list[[25]])
+toc()
+# cores = availableCores()
+# 
+plan(multisession, workers = 6)
+# 
+# 
+possfit_model = possibly(.f = compare, otherwise = "Error")
+# 
+#possfit_model(data_list[[1]])
+#
+# 
+
+results <- future_map(data_list, ~possfit_model(.x),
+                       .progress = TRUE,
+                       .options = furrr_options(seed = TRUE))
+
+
+
+results2 = results[results != "Error"]
+
+params = map_dfr(results2, 1)
+
+
+#dd = map_dfr(results,rbind)
+
+
+params %>% 
+  pivot_longer(cols = c("real_psy_alpha","real_psy_beta","real_psy_lambda","real_psy_gamma"), names_to = "real_names",values_to = "real_values") %>% 
+  mutate(dif = mean-real_values) %>% 
+  filter(paste0("real_",variable) == real_names) %>% 
+  ggplot(aes(x = dif, fill = static))+
+  geom_histogram(col = "black", position = "identity")+
+  facet_wrap(~real_names, scales = "free")+theme_classic()
+
+
+params %>% 
+  pivot_longer(cols = c("real_psy_alpha","real_psy_beta","real_psy_lambda","real_psy_gamma"), names_to = "real_names",values_to = "real_values") %>% 
+  filter(paste0("real_",variable) == real_names) %>% 
+  mutate(estimation_method = ifelse(static == F, "new","old")) %>% 
+  ggplot(aes(x = sd, fill = estimation_method))+
+  geom_histogram(col = "black", position = "identity")+
+  facet_wrap(~real_names, scales = "free")+theme_classic()
+  
+
+params %>% 
+  pivot_longer(cols = c("real_psy_alpha","real_psy_beta","real_psy_lambda","real_psy_gamma"), names_to = "real_names",values_to = "real_values") %>% 
+  filter(paste0("real_",variable) == real_names) %>% 
+  mutate(estimation_method = ifelse(static == F, "new","old")) %>% 
+  ggplot()+
+  geom_pointrange(aes(x = real_values, y = mean, ymin = q5, ymax = q95, col = estimation_method))+
+  facet_wrap(~real_names, scales = "free")+theme_classic()
+  
+
+
+
+```
+
+
+
+
+# Psychometric Vas
+
+```{r}
+erf <- function(x) 2 * pnorm(x * sqrt(2)) - 1
+
+
+fit_pathfinder = function(parameters){
+
+N = parameters$N
+
+
+r = array(NA,N)
+p = array(NA,N)
+x = array(NA,N)
+
+parm_ev = data.frame()
+
+t_test = 5
+
+
+if(parameters$stim == "warm"){
+  x[1:t_test] = seq(30,50,length.out = 5)
+  max_stim = 50
+
+}else if(parameters$stim == "cold"){
+  x[1:t_test] = seq(0,30,length.out = 5)
+  max_stim = 0
+
+}
+
+mod = cmdstanr::cmdstan_model(here::here("stan_scripts","psy","psy_vas.stan"))
+
+for(i in 1:N){
+  if(i <= t_test){  
+    p[i] = parameters$psy_gamma + (1 - parameters$psy_gamma - parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+    r[i] = extraDistr::rprop(1,parameters$perc_per,p[i])
+    i = i+1
+
+    next
+  }
+  
+
+  data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                   x = data.frame(x) %>% drop_na() %>% .$x,
+                   r = data.frame(r) %>% drop_na() %>% .$r,
+                   stim = 1)
+  
+  fit_psy <- mod$pathfinder(data = data_stan,refresh=0)
+  
+  c_trial = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda","perc_per"))) %>% mutate(trials = i)
+  
+  parm_ev = rbind(parm_ev, c_trial)
+  
+  
+  if(i < 10){
+    x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+  }else{
+    sign = sample(c(-1,1),1)
+    x[i] = fit_psy$draws("psy_alpha")[1]+sign*fit_psy$draws("psy_beta")[1]
+  }
+  if(parameters$stim == "warm"){
+    while(x[i] > max_stim){
+      if(i < 10){
+        x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+        }else{
+        sign = sample(c(-1,1),1)
+        x[i] = fit_psy$draws("psy_alpha")[1]+sign*fit_psy$draws("psy_beta")[1]
+      }
+    }
+  }
+  if(parameters$stim == "cold"){
+    while(x[i] < max_stim){
+      if(i < 10){
+        x[i] = data.frame(fit_psy$summary("psy_alpha")) %>% .$mean
+        }else{
+        sign = sample(c(-1,1),1)
+        x[i] = fit_psy$draws("psy_alpha")[1]+sign*fit_psy$draws("psy_beta")[1]
+      }
+    }
+  }
+    p[i] = parameters$psy_gamma + (1 - parameters$psy_gamma - parameters$psy_lambda) * (0.5+0.5*erf((x[i]-parameters$psy_alpha)/(parameters$psy_beta*sqrt(2))))
+    r[i] = extraDistr::rprop(1,parameters$perc_per,p[i])
+    
+  
+  
+
+}
+
+data_stan = list(trials = nrow((data.frame(r) %>% drop_na())),
+                 x = data.frame(x) %>% drop_na() %>% .$x,
+                 r = data.frame(r) %>% drop_na() %>% .$r,
+                 stim = 1)
+
+fit_psy <- mod$sample(
+  data = data_stan,
+  chains = 4,
+  parallel_chains = 4,
+  adapt_delta = 0.9,
+  max_treedepth = 12,
+  refresh = 500
+)
+
+
+
+parm_ev = parm_ev %>% 
+  select(trials,q5,q95,mean,variable) %>% 
+  pivot_wider(names_from = variable, values_from = c("q5","q95", "mean"), id_cols = trials)
+
+df_trial = data.frame(x = x,
+                      p = p,
+                      r = r,
+                      trials = 1:N)
+
+df_trial = full_join(df_trial,parm_ev)
+
+
+df_subj = data.frame(fit_psy$summary(c("psy_alpha","psy_beta","psy_gamma","psy_lambda","perc_per"))) %>% 
+                                                      mutate(
+                                                      real_psy_alpha = parameters$psy_alpha,
+                                                      real_psy_beta = parameters$psy_beta,
+                                                      real_psy_lambda = parameters$psy_lambda,
+                                                      real_psy_gamma = parameters$psy_gamma,
+                                                      stim = parameters$stim,
+                                                      trials = N,
+                                                      id = parameters$id,
+                                                      replicate = parameters$replicate)
+
+
+#overkill to take draws
+#as_draws_df(fit_psy$draws("pred_resp")) %>% mutate(draw = 1:nrow(.)) %>% pivot_longer(-draw) %>% mutate(trial = numbers <- gsub("pred_resp\\[(\\d+)\\]", "\\1", name)) 
+
+predicted_resp = data.frame(fit_psy$summary("pred_resp")) %>% mutate(trial = df_trial$trials, stim = df_trial$x)
+
+return(list(df_subj,df_trial, predicted_resp))
+}
+
+real_psy_alpha = 10
+real_psy_beta = 2
+real_psy_lambda = 0.05
+real_psy_gamma = 0.01
+real_perc_per = 10
+
+stim = "cold"
+N = 50
+
+test = fit_pathfinder(parameters = data.frame(psy_alpha = real_psy_alpha,
+                                       psy_beta = real_psy_beta,
+                                       stim = stim,
+                                       perc_per = real_perc_per,
+                                       psy_lambda = real_psy_lambda,
+                                       psy_gamma = real_psy_gamma,
+                                       N = N,
+                                       id = 1,
+                                       replicate = 1))
+
+
+
+
+test[[2]] %>% ggplot() + geom_point(aes(x = x, y = r), col = "red")+geom_line(aes(x = x, y = p))+
+  geom_pointrange(data = test[[3]], aes(x = stim, y = mean, ymax = q95, ymin = q5))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_alpha, ymin = q5_psy_alpha, ymax = q95_psy_alpha))+
+  geom_abline(intercept = real_psy_alpha, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_alpha"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_beta, ymin = q5_psy_beta, ymax = q95_psy_beta))+
+  geom_abline(intercept = real_psy_beta, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_beta"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_gamma, ymin = q5_psy_gamma, ymax = q95_psy_gamma))+
+  geom_abline(intercept = real_psy_gamma, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_gamma"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_psy_lambda, ymin = q5_psy_lambda, ymax = q95_psy_lambda))+
+  geom_abline(intercept = real_psy_lambda, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "psy_lambda"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+test[[2]] %>% ggplot() + geom_pointrange(aes(x = trials, y = mean_perc_per, ymin = q5_perc_per, ymax = q95_perc_per))+
+  geom_abline(intercept = real_perc_per, slope = 0)+
+  geom_pointrange(data = test[[1]] %>% filter(variable == "perc_per"), aes(x = max(test[[2]]$trials)+1, y = mean, ymin = q5, ymax = q95, col = "red"))
+
+
+
+```
