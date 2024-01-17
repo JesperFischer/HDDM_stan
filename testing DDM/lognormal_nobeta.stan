@@ -11,7 +11,6 @@ data {
 parameters {
   real theta_raw;
   real intercept;
-  real beta;
   real sigma_raw;
   real ndt_raw;
 }
@@ -34,7 +33,6 @@ model{
   
   target += normal_lpdf(ndt_raw | 0,1); //global mean for the tau parameter also inv_logit transformed
   
-  target += normal_lpdf(beta | 0,4); //global mean of delta evaluated on the real scale
   
   target += normal_lpdf(sigma_raw | log(3), 0.6); //global mean for beta where its on the log scale as we exponentitate it.
 
@@ -44,7 +42,7 @@ model{
   
   
   real mu_rt;
-  mu_rt = intercept + beta * (theta)*(1-theta);
+  mu_rt = intercept;
 
     
   for(n in 1:trials){
@@ -66,7 +64,7 @@ generated quantities{
   for (n in 1:trials){
     
     log_lik[n] = bernoulli_lpmf(resp[n] | theta) + 
-                 lognormal_lpdf(RT[n] - ndt | intercept + beta * (theta)*(1-theta), sigma);
+                 lognormal_lpdf(RT[n] - ndt | intercept, sigma);
   
   }
   
