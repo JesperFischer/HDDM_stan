@@ -151,17 +151,20 @@ data_list <- split(parameters, parameters$id)
 
 ```{r}
 
-plan(multisession, workers =15)
+#plan(multisession, workers =15)
 
-possfit_model = possibly(.f = fit_both_with_ddm_data, otherwise = "Error")
+#possfit_model = possibly(.f = fit_both_with_ddm_data, otherwise = "Error")
 
-results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+#results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
 ```
 
 # Parameter recover results!
 
 We start with the models that caused errors if any.
 ```{r}
+
+load(here::here("testing DDM","results_ddm_data.RData"))
+
 error_indices <- which(results == "Error")
  
 unique(error_indices)
@@ -242,7 +245,12 @@ params = map_dfr(results2,1)
 
 unique(params$winning_model)
 
-params %>% group_by(winning_model) %>% summarize(n())
+params%>% slice(seq(1,nrow(params), by = 2)) %>% filter(amount < -2) %>% group_by(trials,winning_model) %>% summarize(n())
+
+
+params  %>% group_by(winning_model) %>% summarize(n())
+
+
 
 pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "ddm")
 
@@ -258,7 +266,7 @@ summary(m1)
 
 
 ```{r, fig.height=6, fig.width=8}
-params %>% ggplot(aes(x = as.factor(real_alpha), y = amount, col = as.factor(trials)))+
+params %>% filter(winning_model == "ddm") %>% ggplot(aes(x = as.factor(real_alpha), y = amount, col = as.factor(trials)))+
   geom_boxplot()+theme_classic()+geom_abline(intercept = -2, slope = 0)+
   facet_grid(real_delta~real_beta, labeller = label_both, scales = "free")
 
@@ -425,19 +433,22 @@ data_list <- split(parameters, parameters$id)
 
 ```{r}
 
-plan(multisession, workers = 15)
 
-possfit_model = possibly(.f = fit_both_with_ln_data, otherwise = "Error")
+#plan(multisession, workers = 15)
 
-possfit_model(data_list[[1]])
+#possfit_model = possibly(.f = fit_both_with_ln_data, otherwise = "Error")
 
-results_ln <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+#possfit_model(data_list[[1]])
+
+#results_ln <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
 ```
 
 # Parameter recover results!
 
 We start with the models that caused errors if any.
 ```{r}
+load(here::here("testing DDM","results ln.RData"))
+
 error_indices <- which(results_ln == "Error")
  
 unique(error_indices)
@@ -522,21 +533,18 @@ unique(params$winning_model)
 
 params %>% group_by(winning_model) %>% summarize(n())
 
-pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "ddm")
+#params %>% filter(amount < -2) %>% group_by(winning_model) %>% summarize(n())
+params%>% slice(seq(1,nrow(params), by = 2)) %>% filter(amount < -2) %>% group_by(trials,winning_model) %>% summarize(n())
 
 
 
-m1 = lm(amount ~ real_alpha* real_beta*real_delta*trials+real_tau, data = pp)
-summary(m1)
+pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "lognormal")
 
-
-m1 = lm(amount ~ real_beta+real_alpha+real_delta+trials+real_tau, data = pp)
-summary(m1)
 ```
 
 
 ```{r, fig.height=6, fig.width=8}
-params %>% ggplot(aes(x = as.factor(real_intercept), y = amount, col = as.factor(trials)))+
+params %>% filter(winning_model == "lognormal")%>% ggplot(aes(x = as.factor(real_intercept), y = amount, col = as.factor(trials)))+
   geom_boxplot()+theme_classic()+geom_abline(intercept = -2, slope = 0)+
   facet_grid(real_sigma~real_theta, labeller = label_both, scales = "free")
 
@@ -684,17 +692,16 @@ parameters = data.frame(expand.grid(N = trials,
 
 data_list <- split(parameters, parameters$id)
 
-
 ```
 
 
 ```{r}
 
-plan(multisession, workers = 15)
+#plan(multisession, workers = 15)
 
-possfit_model = possibly(.f = fit_both_with_ln_data, otherwise = "Error")
+#possfit_model = possibly(.f = fit_both_with_ln_data, otherwise = "Error")
 
-possfit_model(data_list[[1]])
+#possfit_model(data_list[[1]])
 
 results_ln <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
 ```
@@ -703,6 +710,8 @@ results_ln <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .optio
 
 We start with the models that caused errors if any.
 ```{r}
+
+load(here::here("testing DDM","results ln_data_nobeta.RData"))
 error_indices <- which(results_ln == "Error")
  
 unique(error_indices)
@@ -784,6 +793,291 @@ unique(params$winning_model)
 
 params %>% group_by(winning_model) %>% summarize(n())
 
+
+params%>% slice(seq(1,nrow(params), by = 2)) %>% filter(amount < -2) %>% group_by(trials,winning_model) %>% summarize(n())
+
+
+
+
+pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "ddm")
+
+
+
+
+params %>% filter(amount < -2) %>% group_by(winning_model) %>% summarize(n())
+
+pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "lognormal")
+
+
+```
+
+
+```{r, fig.height=6, fig.width=8}
+params %>% filter(winning_model == "lognormal") %>% ggplot(aes(x = as.factor(real_intercept), y = amount, col = as.factor(trials)))+
+  geom_boxplot()+theme_classic()+geom_abline(intercept = -2, slope = 0)+
+  facet_grid(real_sigma~real_theta, labeller = label_both, scales = "free")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+modddm = cmdstanr::cmdstan_model(here::here("report","DDM","Stan Models","DDM.stan"))
+
+
+fit_both_with_ddm_data = function(parameters){
+
+  trials = parameters$N
+  
+  alpha = parameters$alpha
+  
+  delta = parameters$delta
+  
+  beta = parameters$beta
+  
+  tau = parameters$tau
+  
+
+  data = rwiener(n = trials,
+          alpha = alpha,
+          delta = delta,
+          beta = beta,
+          tau = tau)
+  
+  
+  
+  data_stan = list(trials = nrow(data),
+                   RT = data$q,
+                   resp = data$resp,
+                   minRT = min(data$q))
+  
+  
+  
+  fitddm <- modddm$sample(
+      data = data_stan,
+      chains = 4,
+      refresh = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+  variables = c("alpha","tau","beta","delta")
+  
+  ddmparams = data.frame(fitddm$summary(variables)) %>% mutate(real_alpha = parameters$alpha,
+                                                   real_beta = parameters$beta,
+                                                   real_tau = parameters$tau,
+                                                   real_delta = parameters$delta,
+                                                   trials = parameters$N,
+                                                   id = parameters$id
+                                                   )
+
+  diagddm = data.frame(fitddm$diagnostic_summary()) %>% mutate(id = parameters$id)
+  
+  variables = c("intercept","ndt","theta","sigma")
+  
+  modln = cmdstanr::cmdstan_model(here::here("testing DDM","lognormal_nobeta.stan"))
+  
+  fitln <- modln$sample(
+      data = data_stan,
+      chains = 4,
+      refresh = 0,
+      parallel_chains = 4,
+      adapt_delta = 0.9,
+      max_treedepth = 12)
+  
+  
+   lognormal_params = data.frame(fitln$summary(variables)) %>% mutate(real_alpha = parameters$alpha,
+                                                   real_beta = parameters$beta,
+                                                   real_tau = parameters$tau,
+                                                   real_delta = parameters$delta,
+                                                   trials = parameters$N,
+                                                   id = parameters$id
+                                                   )
+  
+    diagln = data.frame(fitln$diagnostic_summary()) %>% mutate(id = parameters$id)
+
+  
+  comparison = data.frame(loo_compare(list(ddm = fitddm$loo(), lognormal = fitln$loo())))
+  
+  comparison = comparison %>% mutate(winning_model = rownames(comparison)[1], amount = comparison[2,1]/comparison[2,2], id = parameters$id)
+  
+  
+  comparison = comparison %>% mutate(real_alpha = parameters$alpha,
+                                                   real_beta = parameters$beta,
+                                                   real_tau = parameters$tau,
+                                                   real_delta = parameters$delta,
+                                                   trials = parameters$N,
+                                                   id = parameters$id
+                                                   )
+
+  return(list(comparison, lognormal_params, ddmparams, diagln, diagddm))
+}
+
+
+
+parameters = data.frame(alpha = 1,
+                        delta = 1,
+                        beta = 0.5,
+                        tau = 0.1,
+                        N = 50,
+                        id = 1)
+
+test = fit_both_with_ddm_data(parameters)
+
+
+t = 500
+
+trials = round(runif(t,20,200),0)
+alpha = runif(t,1,3)
+delta = runif(t,-3,3)
+beta = runif(t,0.3,0.7)
+tau = runif(t,0.1,0.8)
+
+
+trials = c(50,100,200)
+alpha = c(1,2,3)
+delta = c(-2,-1,0,1,2)
+beta = c(0.3,0.5,0.7)
+tau = c(0.1,0.5,0.9)
+
+replicate = 1:5
+
+
+
+
+parameters = data.frame(expand.grid(N = trials,
+           alpha = alpha,
+           delta = delta,
+           beta = beta,
+           replicate = replicate,
+           tau = tau)) %>% mutate(id = 1:nrow(.))
+
+data_list <- split(parameters, parameters$id)
+```
+
+
+
+```{r}
+plan(multisession, workers =15)
+
+possfit_model = possibly(.f = fit_both_with_ddm_data, otherwise = "Error")
+
+test = possfit_model(data_list[[1]])
+
+results <- future_map(data_list, ~possfit_model(.x), .progress = TRUE, .options = furrr_options(seed = TRUE))
+```
+
+# Parameter recover results!
+
+We start with the models that caused errors if any.
+```{r}
+
+load(here::here("testing DDM","ddm data on nobeta lognormal.RData"))
+
+error_indices <- which(results == "Error")
+ 
+unique(error_indices)
+
+results2 = results[results != "Error"]
+
+
+divergence = map_dfr(results2, 4)
+
+divergence %>% median_qi(num_divergent)
+
+
+divergence = map_dfr(results2, 5)
+
+divergence %>% median_qi(num_divergent)
+```
+
+
+
+
+```{r}
+params = map_dfr(results2,3)
+
+
+variables = c("alpha","delta","tau","beta")
+plots = list()
+for (variable1 in variables){
+  plot = params %>% filter(variable == variable1) %>% 
+    mutate(real = get(paste0("real_",variable1))) %>% 
+    ggplot(aes(x = mean, y = real, fill = as.factor(trials)))+
+    geom_point(alpha = 0.5,shape = 21)+
+    theme_classic()+
+    geom_abline(slope = 1, intercept = 0)+
+    xlab("Estimated")+
+    ylab("Simulated")+
+    ggtitle(variable1)+
+    theme(legend.position = "top")
+
+  plots[[variable1]] = plot
+}
+
+
+(plots[["alpha"]]+plots[["delta"]])/(plots[["tau"]]+plots[["beta"]])
+
+
+
+params = map_dfr(results2,2)
+
+
+variables = c("alpha","delta","tau","beta")
+
+variables = c("intercept","ndt","theta","sigma")
+
+plots = list()
+for (variable1 in variables){
+  
+  alpha = params %>% filter(variable == variable1) %>% ggplot(aes(x = mean, y = real_alpha))+geom_point()+xlab(variable1)+geom_smooth(method = "lm")
+  
+  tau = params %>% filter(variable == variable1) %>% ggplot(aes(x = mean, y = real_tau))+geom_point()+xlab(variable1)+geom_smooth(method = "lm")
+  
+  beta = params %>% filter(variable == variable1) %>% ggplot(aes(x = mean, y = real_beta))+geom_point()+xlab(variable1)+geom_smooth(method = "lm")
+  
+  delta = params %>% filter(variable == variable1) %>% ggplot(aes(x = mean, y = real_delta))+geom_point()+xlab(variable1)+geom_smooth(method = "lm")
+  
+  
+    plots[[variable1]] = (alpha+tau)/(beta+delta)
+  
+}
+
+
+plots[[1]]
+plots[[2]]
+plots[[3]]
+plots[[4]]
+
+
+
+params = map_dfr(results2,1)
+
+unique(params$winning_model)
+
+
+params%>% slice(seq(1,nrow(params), by = 2)) %>% filter(amount < -2) %>% group_by(trials,winning_model) %>% summarize(n())
+
+
+
+
 pp = params %>% slice(seq(1,nrow(params), by = 2)) %>% filter(winning_model == "ddm")
 
 
@@ -798,8 +1092,8 @@ summary(m1)
 
 
 ```{r, fig.height=6, fig.width=8}
-params %>% ggplot(aes(x = as.factor(real_intercept), y = amount, col = as.factor(winning_model)))+
+params %>% filter(winning_model == "ddm")%>% slice(seq(1,nrow(params), by = 2)) %>% filter(amount < -2) %>% ggplot(aes(x = as.factor(real_alpha), y = amount, col = as.factor(trials)))+
   geom_boxplot()+theme_classic()+geom_abline(intercept = -2, slope = 0)+
-  facet_grid(real_sigma~real_theta, labeller = label_both, scales = "free")
+  facet_grid(real_delta~real_beta, labeller = label_both, scales = "free")
 
 ```

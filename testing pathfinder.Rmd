@@ -150,6 +150,7 @@ get_next_conting2 = function(resps,us,trials){
 
 
 ```{r}
+#looking 2 ahead
 fit_pathfinder_n2 = function(parameters){
   
   N = parameters$N
@@ -292,7 +293,7 @@ return(list(df_subj,df_trial))
 }
 
 real_lr = 0.3
-real_zeta = 5
+real_zeta = 10
 N = 50
 
 mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
@@ -300,7 +301,7 @@ mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","
 
 test = fit_pathfinder_n2(parameters = data.frame(lr = real_lr,
                                        zeta = real_zeta,
-                                       N = 50,
+                                       N = 100,
                                        id = 1,
                                        replicate = 1)
                       )
@@ -335,6 +336,8 @@ p1/calc_lr/calc_zeta
 
 
 ```{r}
+
+#looking 1 ahead
 fit_pathfinder_n1 = function(parameters){
   
   N = parameters$N
@@ -464,7 +467,7 @@ return(list(df_subj,df_trial))
 }
 
 real_lr = 0.3
-real_zeta = 5
+real_zeta = 10
 N = 50
 
 mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","RL2_pathfinder.stan"))
@@ -472,7 +475,7 @@ mod = cmdstanr::cmdstan_model(here::here("stan_scripts","Pure Learning Models","
 
 test = fit_pathfinder_n1(parameters = data.frame(lr = real_lr,
                                        zeta = real_zeta,
-                                       N = 50,
+                                       N = 100,
                                        id = 1,
                                        replicate = 1)
                       )
@@ -498,6 +501,9 @@ p2 = test[[2]] %>% ggplot(aes(x = trials,y = calc_entropy))+geom_point()
 p2/calc_lr/calc_zeta
 
 p1/calc_lr/calc_zeta
+
+
+
 ```
 
 
@@ -614,15 +620,6 @@ for(i in 1:N){
     }
   }
   
-  # lookahead = 2
-  # u = c(0,1)
-  # r = c(0,1)
-  # 
-  # # Combine the results
-  # all_combinations <- expand.grid(trials,u,r)
-  # 
-  # un = all_combinations$Var2
-  # rn = all_combinations$Var3
   
   entro = get_next_conting(resps,us,trials)
   
